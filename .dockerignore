@@ -1,0 +1,19 @@
+# Exclude virtual environments and local caches
+venv/
+.git/
+.gitignore
+.agents/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+calibration_cache/
+
+# Exclude massive audio files that aren't needed inside the image build context
+tv_noise.mp3
+playground.ipynb
+
+# Exclude local editor settings
+.vscode/
+.idea/
