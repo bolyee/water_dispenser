@@ -62,5 +62,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
 WORKDIR /app/demo
 
 # The Gradio demo is the only entrypoint that runs headless; the realtime/
-# scripts need host microphone/serial access (see docs/DOCKER.md).
+# scripts need host microphone/serial access (see README).
 CMD ["python", "app.py"]

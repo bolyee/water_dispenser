@@ -55,7 +55,6 @@ water_dispenser/
 ├── tests_and_simulations/     평가·시뮬레이션·단위 테스트
 ├── dataset_tools/             데이터셋 수집 및 소음 합성
 ├── calibration_cache/         컵별 공명 템플릿 (.npz)
-├── docs/                      문서 및 발표 자료
 ├── scripts/                   Windows 배치 스크립트
 │
 └── 원본 SoundOfWater 코드 (수정하지 않음)
@@ -151,12 +150,10 @@ water_dispenser/
 
 | 파일 | 설명 |
 | --- | --- |
-| `Dockerfile`, `docker-compose.yml`, `.dockerignore` | CUDA 12.1 기반 실행 환경. 자세한 내용은 [docs/DOCKER.md](./docs/DOCKER.md). |
+| `Dockerfile`, `docker-compose.yml`, `.dockerignore` | CUDA 12.1 기반 실행 환경. |
 | `requirements.txt` | 실행에 필요한 파이썬 패키지 고정 버전. |
 | `scripts/setup.bat`, `scripts/run.bat` | Windows용 venv 생성 / 실행 배치 스크립트. 어디서 실행하든 저장소 루트로 이동한 뒤 동작합니다. |
 | `calibration_cache/*.npz` | 컵별 공명 템플릿 캐시. 한 번 학습하면 다음부터 즉시 로드. |
-| `docs/presentation.md`, `docs/noise_filter_presentation.md` | 시스템 전체 / 디노이징 기법 비교 발표 자료 (Marp). |
-| `docs/PROJECT_SUMMARY.md` | 개발 이력과 파라미터 튜닝 근거 기록. |
 
 ---
 
@@ -191,7 +188,17 @@ source venv/bin/activate        # Windows: .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Docker로 실행하려면 [docs/DOCKER.md](./docs/DOCKER.md)를 참고하세요.
+Docker를 쓴다면 (CUDA 12.1 기반, Gradio 데모용):
+
+```bash
+docker compose up demo          # http://localhost:7860
+docker compose run --rm shell   # 실시간 스크립트용 셸
+```
+
+모델 가중치는 이미지에 포함하지 않고 `./models`를 마운트합니다.
+`realtime/` 스크립트는 마이크·카메라·시리얼 접근이 필요해서 컨테이너에서
+바로 돌지 않습니다 (Docker Desktop은 macOS/Windows에서 오디오 입력 자체를
+전달하지 못함). 해당 device 옵션은 `docker-compose.yml`에 주석으로 있습니다.
 
 ### 2. 모델 가중치 내려받기
 
@@ -257,7 +264,6 @@ python realtime/realtime_noesp_camera.py      # 카메라 컵 자동 인식 + �
 > 가드 타임은 원래 2.0초였습니다. 5~8초짜리 짧은 음원에서 "물 감지 → 가드
 > 2초 → 연속 확인 2회(2초)"로 최소 4초가 필요해 오디오가 먼저 끝나버리는
 > **미정지 현상**이 발생했고, 1.0초로 줄여 해결했습니다.
-> 상세 내역은 [docs/PROJECT_SUMMARY.md](./docs/PROJECT_SUMMARY.md) 참고.
 
 ---
 
@@ -276,23 +282,6 @@ python realtime/realtime_noesp_camera.py      # 카메라 컵 자동 인식 + �
 노이즈 플로어 수집)을 먼저 시도했으나, 정지 실패가 남아 2D U-Net으로 전환했습니다.
 U-Net은 1초 오디오 처리에 약 **5ms**만 소요되어 실시간성에 영향을 주지 않고,
 터미널에 `[Denoise Latency: X.Xms]`로 실측값이 계속 출력됩니다.
-
----
-
-## 🛠️ 트러블슈팅
-
-- **UDP 패킷이 안 들어옴 (Windows)** — 방화벽에서 `python.exe`를 허용해야 합니다.
-  관리자 PowerShell에서:
-  ```powershell
-  Set-NetFirewallRule -DisplayName "python.exe" -Action Allow
-  ```
-- **마이크 소리가 너무 작음** — INMP441은 채널당 32 클럭으로 24bit를 보냅니다.
-  드라이버를 `I2S_BITS_PER_SAMPLE_32BIT`로 두고 `>> 12` 시프트해야 정렬된
-  16bit PCM과 16배 볼륨 부스트가 나옵니다.
-- **물을 안 따르는데 멈춤 신호가 나감** — 침묵 게이트 임계값 문제입니다.
-  조용한 상태에서 캘리브레이션을 다시 하면 노이즈 플로어가 갱신됩니다.
-- **컵 인식이 자꾸 틀림** — `realtime/test_camera_cup_classification.py`에서 `[+]`/`[-]`로
-  매칭 임계값을 조정한 뒤 그 값을 본 스크립트에 반영하세요.
 
 ---
 

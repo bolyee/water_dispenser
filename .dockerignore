@@ -44,11 +44,7 @@ playground.ipynb
 # ESP32 firmware — flashed from the host, not used inside the container
 firmware/
 
-# Docs
-docs/
-
-# Docs and editor/OS cruft
-*.original.md
+# Editor/OS cruft
 .vscode/
 .idea/
 .DS_Store
