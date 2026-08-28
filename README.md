@@ -16,7 +16,7 @@ ESP32 서보모터로 밸브를 자동 차단하는 시스템입니다.
 ## 📌 원본 프로젝트 (출처)
 
 이 저장소는 아래 연구의 공개 코드를 **클론하여 확장한 것**입니다.
-`sound_of_water/`, `shared/`, `demo/`, `dataset_tools/`, `playground.ipynb`,
+`sound_of_water/`, `shared/`, `demo/`, `playground.ipynb`,
 사전학습 체크포인트는 모두 원저자의 결과물입니다.
 
 > **The Sound of Water: Inferring Physical Properties from Pouring Liquids**
@@ -42,7 +42,7 @@ ESP32 서보모터로 밸브를 자동 차단하는 시스템입니다.
    (직접 학습, `models/denoiser_best.pth`)
 4. **안전 제어 로직** — RMS 침묵 게이트, 물리적 변화 제한, 연속 확인, 안전 가드
 5. **카메라 기반 컵 자동 인식** — ResNet-18 임베딩 매칭 + TTS 음성 안내
-6. **평가 시뮬레이터** — Clean / Noisy / DSP / AI 디노이즈 4개 시나리오 정량 비교
+6. **시뮬레이션 도구** — 녹음 파일로 정지 로직을 재현하고 상태 변수를 추적
 
 ---
 
@@ -53,7 +53,6 @@ water_dispenser/
 ├── firmware/                  ESP32 아두이노 스케치
 ├── realtime/                  실시간 실행 스크립트 (메인)
 ├── tests_and_simulations/     평가·시뮬레이션·단위 테스트
-├── dataset_tools/             데이터셋 수집 및 소음 합성
 ├── calibration_cache/         컵별 공명 템플릿 (.npz)
 ├── scripts/                   Windows 배치 스크립트
 │
@@ -115,7 +114,6 @@ water_dispenser/
 | 파일 | 설명 |
 | --- | --- |
 | `sound_of_water/audio_pitch/denoiser.py` | 경량 2D U-Net + `AudioDenoisingWrapper`. 1초 스펙트로그램 magnitude에 곱할 마스크(0.0~1.0)를 예측하고, 원본 위상을 재사용해 파형으로 복원. |
-| `tests_and_simulations/train_denoiser.py` | 디노이저 학습 스크립트. Clean 805개 음원 + TV 소음(+3dB) 합성 페어로 학습. |
 | `models/denoiser_best.pth` | 학습 완료 가중치 (495KB). **HuggingFace에 없는 자체 학습 결과물**입니다. |
 
 ### 카메라 컵 인식
@@ -124,27 +122,18 @@ water_dispenser/
 | --- | --- |
 | `realtime/test_camera_cup_classification.py` | 오디오/AI 모델을 배제하고 카메라 인식만 검증하는 테스트 프로그램. ResNet-18 임베딩 코사인 유사도로 등록된 컵을 분류. 실행 중 `[c]` 컵 등록, `[+]/[-]` 임계값 조정, `[Space]` 일시정지. |
 
-### 평가 · 시뮬레이션 (`tests_and_simulations/`)
+### 시뮬레이션 · 테스트 — `tests_and_simulations/`
 
 | 파일 | 설명 |
 | --- | --- |
-| `evaluate_noisy_vs_clean.py` | Clean 데이터셋과 소음 합성 데이터셋을 1:1 매핑해 수위 MAE와 정지 지연(Stop Latency)을 정량 비교. |
-| `evaluate_unseen_noise.py` | 학습에 쓰지 않은 종류의 소음에 대한 일반화 성능 평가. |
 | `compare_denoise.py` | DSP(스펙트럼 차감) vs 2D U-Net 디노이즈 결과 비교. |
+| `realtime_mic_denoise.py`, `realtime_esp32_mic_denoise.py` | DSP 스펙트럼 차감 방식을 쓰던 초기 실시간 버전. U-Net 채택 전의 비교 대상. |
+| `record_and_denoise.py` | 마이크로 녹음한 뒤 디노이저를 통과시켜 전후 WAV를 저장. |
 | `simulate_realtime_stream.py` | WAV 파일을 실시간 스트림처럼 1초씩 흘려보내 정지 로직 재현. |
 | `simulate_mel_match.py`, `simulate_pitch_matching.py`, `simulate_stop.py` | Mel 매칭 / 피치 매칭 / 정지 트리거 각각의 단위 시뮬레이션. |
 | `record_esp32_audio.py` | ESP32 UDP 수신 확인 및 WAV 녹음. **배선 후 첫 점검용.** |
 | `test_esp32_servo.py`, `test_mic_input.py`, `test_inference.py` | 서보 / 마이크 입력 / 모델 추론 개별 동작 확인. |
 | `debug_chunk.py`, `debug_pitch.py` | 청크 단위 상태 변수(RMS, 예측값, 채택값, 연속 확인 횟수, 가드 타임) 트레이싱. |
-
-### 데이터셋 도구 (`dataset_tools/`)
-
-| 파일 | 설명 |
-| --- | --- |
-| `download_dataset.py` | 원본 sound-of-water 데이터셋 다운로드. |
-| `download_yt.py`, `download_noise_datasets.py`, `download_home_noise.py` | 유튜브/공개 소음 데이터셋 수집. |
-| `mix_yt_noise.py`, `mix_home_noise.py`, `split_tv_noise.py` | Clean 음원에 소음을 지정 SNR로 합성해 학습/평가용 노이즈 데이터셋 생성. |
-| `create_unseen_test_dataset.py` | 학습에 쓰지 않은 소음으로 별도 테스트셋 구성. |
 
 ### 기타
 
@@ -269,7 +258,9 @@ python realtime/realtime_noesp_camera.py      # 카메라 컵 자동 인식 + �
 
 ## 📊 디노이징 성능 비교
 
-20건 평가 기준 (`tests_and_simulations/evaluate_noisy_vs_clean.py`):
+개발 당시 20건 평가 결과입니다. 평가에 쓰인 소음 합성 데이터셋과 그 생성
+도구는 저장소에서 제외했으므로, 아래는 재현 가능한 벤치마크가 아니라 채택
+근거 기록입니다.
 
 | 시나리오 | 수위 MAE | 80% 정지 지연 | 자동 정지 실패 |
 | --- | --- | --- | --- |
