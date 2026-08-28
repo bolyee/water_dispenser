@@ -1,14 +1,13 @@
 """
-realtime_noesp_mic_unet.py  —  노트북 마이크 + ESP32 연동 실시간 수위 모니터 (2D U-Net 디노이저 통합 버전)
---------------------------------------------------------------------------------------------------
+realtime_mic_unet.py  —  마이크 기반 실시간 정수기 수위 모니터 (2D U-Net 디노이저 통합 버전)
+-----------------------------------------------------------------------------------------
 사용법:
-    python3 realtime_noesp_mic_unet.py
+    python3 realtime_mic_unet.py
 
 특징:
     1. 학습 완료된 2D U-Net 디노이저(models/denoiser_best.pth) 탑재.
-    2. 실시간 노트북 마이크 입력(1초 버퍼)에 대해 U-Net 노이즈 필터링 적용 후 매칭 수행.
+    2. 실시간 오디오 입력(1초 버퍼)에 대해 U-Net 노이즈 필터링 적용 후 매칭 수행.
     3. 실시간 디노이징 연산 속도(ms 단위)를 실시간 추적하여 출력.
-    4. 컵이 가득 차면 자동으로 ESP32 서보모터 차단 URL(/stop) 호출.
 """
 
 import os
@@ -25,7 +24,9 @@ import librosa
 import requests
 from transformers import Wav2Vec2FeatureExtractor
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 이 파일은 realtime/ 안에 있으므로 저장소 루트는 한 단계 위.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(ROOT_DIR)
 from demo.util import load_model, get_model_output, visualise_args
 import shared.utils as su
 from sound_of_water.audio_pitch.denoiser import AudioDenoisingWrapper
@@ -47,10 +48,9 @@ def preprocess_audio(audio_np: np.ndarray) -> torch.Tensor:
 FILL_RATIO       = 0.55   # 몇 % 채워지면 멈출지 (지연 보완을 위해 55%로 하향)
 SR               = 16000  # 마이크 샘플링 레이트 (16kHz 고정)
 INFERENCE_INTERVAL = 1.0  # AI 추론 주기 (초)
-ESP32_IP         = "20.30.88.125"  # ESP32 보드 IP 주소 (서보 제어용)
 # ============================================================
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_cache")
+CACHE_DIR = os.path.join(ROOT_DIR, "calibration_cache")
 
 # 공유 상태
 shared = {
@@ -76,14 +76,14 @@ def select_or_create_cache(model, denoiser_model, device):
     caches = list_caches()
 
     print("\n" + "="*58)
-    print("  [컵 선택 메뉴 - 노트북 마이크 U-Net Denoise 모드]")
+    print("  [컵 선택 메뉴 - U-Net Denoise 모드]")
     for i, name in enumerate(caches):
         info = np.load(os.path.join(CACHE_DIR, name))
         l_max = float(info['l_max'])
         l_min = float(info['l_min'])
         print(f"  [{i+1}] {name.replace('_calibration.npz', '')}")
         print(f"       컵 높이: {l_max:.2f}cm | 꽉 찰 때: {l_min:.2f}cm")
-    print(f"  [0] 새 컵 학습 (노트북 마이크로 녹음)")
+    print(f"  [0] 새 컵 학습 (마이크로 녹음)")
     print("="*58)
 
     while True:
@@ -109,7 +109,7 @@ def select_or_create_cache(model, denoiser_model, device):
 
 def check_mic():
     """마이크가 실제로 동작하는지 확인하고, 기본 배경 소음(noise_floor)을 측정합니다."""
-    print("\n🔍 노트북 마이크 연결 및 주변 노이즈 상태를 확인합니다... (2초간 아무 소리도 내지 마세요!)")
+    print("\n🔍 마이크 연결 및 주변 노이즈 상태를 확인합니다... (2초간 아무 소리도 내지 마세요!)")
     test_buf = []
 
     def cb(indata, frames, t, status):
@@ -395,9 +395,9 @@ def ai_worker(model, denoiser_model, device, l_max, threshold, cache_path):
 
     # 밸브 오프너 호출
     try:
-        print(f"📡 ESP32 SG90 서보모터 밸브 오픈 신호 전송 중... (http://{ESP32_IP}/open)")
+        print("📡 ESP32 SG90 서보모터 밸브 오픈 신호 전송 중... (http://192.168.0.250/open)")
         headers = {'Connection': 'close', 'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(f"http://{ESP32_IP}/open", headers=headers, timeout=3)
+        response = requests.get("http://192.168.0.250/open", headers=headers, timeout=3)
         print(f"✅ ESP32 밸브 오픈 성공! (코드: {response.status_code})")
     except Exception as e:
         print(f"❌ 밸브 오픈 통신 지연/에러 발생 (에러 무시 후 분석 진행): {e}")
@@ -494,18 +494,10 @@ def ai_worker(model, denoiser_model, device, l_max, threshold, cache_path):
             print(f"\n⚠️ [임계치 도달] 정수기 밸브를 차단합니다! ({accepted_pred:.2f}cm ≤ {threshold:.2f}cm)")
             with lock:
                 shared["is_stopped"] = True
-
-            # 🔊 음성 경고 (Mac 'say' 명령어 사용 - 비동기 실행)
             try:
-                import subprocess
-                subprocess.Popen(["say", "물이 다 찼습니다. 멈추세요."])
-            except Exception as e:
-                print(f"🔊 음성 경고 출력 실패: {e}")
-
-            try:
-                print(f"📡 ESP32 SG90 서보모터 정지 신호 전송 중... (http://{ESP32_IP}/stop)")
+                print("📡 ESP32 SG90 서보모터 정지 신호 전송 중... (http://192.168.0.250/stop)")
                 headers = {'Connection': 'close', 'User-Agent': 'Mozilla/5.0'}
-                response = requests.get(f"http://{ESP32_IP}/stop", headers=headers, timeout=5)
+                response = requests.get("http://192.168.0.250/stop", headers=headers, timeout=5)
                 if response.status_code == 200:
                     print(f"✅ ESP32 밸브 물리 차단(잠금) 성공!")
                 else:
@@ -596,7 +588,7 @@ def display_loop(l_max, threshold):
 
 def main():
     print("=" * 58)
-    print("   🎙️  실시간 노트북 마이크 수위 모니터 [U-Net 디노이저 통합]   ")
+    print("   🎙️  실시간 마이크 정수기 수위 모니터 [U-Net 디노이저 통합]   ")
     print("=" * 58)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -609,7 +601,7 @@ def main():
 
     print("\n[2단계: U-Net 디노이저 전처리 모델 로딩 중...]")
     denoiser_model = AudioDenoisingWrapper().to(device)
-    ckpt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "denoiser_best.pth")
+    ckpt_path = os.path.join(ROOT_DIR, "models", "denoiser_best.pth")
     if os.path.exists(ckpt_path):
         denoiser_model.unet.load_state_dict(torch.load(ckpt_path, map_location=device))
         denoiser_model.eval()
@@ -628,7 +620,7 @@ def main():
     try:
         stream = sd.InputStream(samplerate=SR, channels=1, callback=mic_callback)
         stream.start()
-        print(f"🎙️  실시간 노트북 마이크 스트리밍 시작! (샘플레이트: {SR}Hz)")
+        print(f"🎙️  실시간 마이크 스트리밍 시작! (샘플레이트: {SR}Hz)")
     except Exception as e:
         print("\n❌ [치명적 오류] 마이크를 찾을 수 없거나 접근이 거부되었습니다.")
         print(f"   상세 에러: {e}")

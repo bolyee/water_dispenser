@@ -1,7 +1,9 @@
 @echo off
 chcp 65001 >nul
+:: 이 스크립트는 scripts/ 안에 있으므로 저장소 루트로 이동한 뒤 실행한다.
+cd /d "%~dp0.."
 echo ============================================
-echo   SoundOfWater 자동 환경 설정
+echo   Water Dispenser 자동 환경 설정
 echo ============================================
 echo.
 
@@ -29,6 +31,6 @@ call venv\Scripts\activate.bat
 pip install -r requirements.txt
 echo.
 echo ============================================
-echo   설치 완료! 이제 run.bat 으로 실행하세요.
+echo   설치 완료! 이제 scripts\run.bat 으로 실행하세요.
 echo ============================================
 pause

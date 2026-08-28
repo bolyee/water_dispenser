@@ -13,6 +13,13 @@ media_assets/*.png
 # Gradio
 .gradio/
 
+# Runtime scratch buffer written by the realtime scripts
+calibration_cache/_live_buf.wav
+
+# Local agent/skill tooling, not part of the project
+.agents/
+skills-lock.json
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -7,19 +7,19 @@
 ## 1. 📁 레포지토리 구조 및 주요 파일 설명
 
 ### 펌웨어 및 실시간 실행 파일
-* **[esp32_servo_i2s_mic.ino](file:///c:/Users/SPL/SoundOfWater/esp32_servo_i2s_mic.ino)**
+* **[esp32_servo_i2s_mic.ino](../firmware/esp32_servo_i2s_mic/esp32_servo_i2s_mic.ino)**
   * **역할**: ESP32 보드용 아두이노 스케치. INMP441 마이크로부터 I2S 인터페이스로 오디오를 입력받아 16kHz 16bit PCM으로 변환 후 PC로 **UDP 전송**.
   * **제어 인터페이스**: HTTP 웹 서버를 열어 `/open` 및 `/stop` 요청을 수신하고 SG90 서보모터를 회전시켜 물 밸브를 제어함.
-* **[realtime_esp32_mic.py](file:///c:/Users/SPL/SoundOfWater/realtime_esp32_mic.py)**
+* **[realtime_esp32_mic.py](../realtime/realtime_esp32_mic.py)**
   * **역할**: PC에서 실행되는 실시간 수위 감지 및 제어 클라이언트.
   * **동작**: ESP32가 송신하는 UDP 오디오 스트림을 수집하여 Mel-spectrogram을 생성하고, AI 모델 템플릿과의 매칭(Mel Matching)을 통해 현재 수위를 예측하며, 만약 55% 수위에 도달하면 ESP32로 HTTP `/stop` 신호를 자동 전송함. (OpenCV를 통해 수위 및 매칭 정보 실시간 시각화)
-* **[realtime_mic.py](file:///c:/Users/SPL/SoundOfWater/realtime_mic.py)**
+* **[realtime_mic.py](../realtime/realtime_mic.py)**
   * **역할**: PC의 내장 마이크를 활용하여 단독으로 수위 감지를 테스트할 수 있는 실시간 프로그램 (동작 메커니즘은 `realtime_esp32_mic.py`와 동일).
 
 ### 테스트 및 평가 (Tests & Simulations)
-* **[evaluate_noisy_vs_clean.py](file:///c:/Users/SPL/SoundOfWater/tests_and_simulations/evaluate_noisy_vs_clean.py)**
+* **[evaluate_noisy_vs_clean.py](../tests_and_simulations/evaluate_noisy_vs_clean.py)**
   * **역할**: 깨끗한 오디오 데이터셋(`sound_of_water_dataset`)과 노이즈가 합성된 데이터셋(`sound_of_water_dataset_noisy`)을 일대일로 매핑하여 수위 매칭 오차(MAE)와 80% 정지 지연 시간(Stop Latency)을 정량 비교 평가하는 프로그램.
-* **[check_durations_trace.py](file:///C:/Users/SPL/.gemini/antigravity-ide/brain/3cc53ba9-6cfd-4a15-ad23-e7f05681c81a/scratch/check_durations_trace.py) (임시 디버그 스크립트)**
+* **`check_durations_trace.py` (임시 디버그 스크립트)**
   * **역할**: 데이터셋 음원들의 80% 도달 시점 및 총 길이를 출력하고, 실시간 알고리즘의 상태 변수(RMS, 예측값, 채택값, 연속 확인 횟수, 가드 타임)를 초 단위로 트레이싱하여 정지 실패 원인을 수학적으로 규명함.
 
 ### AI 모델 및 데이터셋 관련

@@ -58,7 +58,7 @@ only want the demo on localhost.
 
 ```bash
 docker compose run --rm shell
-python realtime_noesp_mic.py
+python realtime/realtime_noesp_mic.py
 ```
 
 This service bind-mounts the repo at `/app`, so host edits take effect without
@@ -75,18 +75,18 @@ Drop `--gpus all` to run on CPU.
 
 ## Hardware access caveats
 
-The `realtime_*.py` scripts need host hardware that Docker does not forward by
+The `realtime/` scripts need host hardware that Docker does not forward by
 default. The relevant lines are commented out in `docker-compose.yml`:
 
 - **Microphone** — `--device /dev/snd` works on Linux hosts only. Docker
   Desktop on macOS and Windows cannot pass through audio input at all; run
   those scripts natively there.
 - **ESP32 serial** — `--device /dev/ttyUSB0` (adjust for your port).
-- **ESP32 UDP stream** — `esp32_servo_i2s_mic.ino` sends UDP to a hardcoded PC
+- **ESP32 UDP stream** — `firmware/esp32_servo_i2s_mic/` sends UDP to a hardcoded PC
   IP on port 5005. Use `network_mode: host` so the container sees that address,
   and update `pc_ip` in the sketch to match.
-- **Camera** — `test_camera_cup_classification.py` and
-  `realtime_noesp_camera.py` need `--device /dev/video0`, Linux only. They also
+- **Camera** — `realtime/test_camera_cup_classification.py` and
+  `realtime/realtime_noesp_camera.py` need `--device /dev/video0`, Linux only. They also
   call `cv2.imshow`, which needs an X11 socket mount
   (`-e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix`) or they will crash on a
   headless host.

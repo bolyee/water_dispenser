@@ -26,7 +26,9 @@ import librosa
 import requests
 from transformers import Wav2Vec2FeatureExtractor
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 이 파일은 realtime/ 안에 있으므로 저장소 루트는 한 단계 위.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(ROOT_DIR)
 from demo.util import load_model, get_model_output, visualise_args
 import shared.utils as su
 
@@ -49,7 +51,7 @@ UDP_PORT         = 5005   # ESP32 오디오 수신 포트
 ESP32_IP         = "20.30.88.125"  # ESP32 IP 주소 (지연 진단 및 HTTP 제어용)
 # ============================================================
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_cache")
+CACHE_DIR = os.path.join(ROOT_DIR, "calibration_cache")
 
 # 공유 상태
 shared = {

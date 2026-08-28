@@ -61,6 +61,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
 # working. Override working_dir to /app for a plain shell.
 WORKDIR /app/demo
 
-# The Gradio demo is the only entrypoint that runs headless; the realtime_*.py
-# scripts need host microphone/serial access (see DOCKER.md).
+# The Gradio demo is the only entrypoint that runs headless; the realtime/
+# scripts need host microphone/serial access (see docs/DOCKER.md).
 CMD ["python", "app.py"]

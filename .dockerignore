@@ -42,7 +42,10 @@ tv_noise.mp3
 playground.ipynb
 
 # ESP32 firmware — flashed from the host, not used inside the container
-*.ino
+firmware/
+
+# Docs
+docs/
 
 # Docs and editor/OS cruft
 *.original.md

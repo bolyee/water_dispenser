@@ -1,34 +1,36 @@
 """
-realtime_esp32_mic_unet.py  —  ESP32 UDP 마이크 기반 실시간 수위 모니터 (2D U-Net 디노이저 통합 버전)
---------------------------------------------------------------------------------------------------
+realtime_noesp_mic.py  —  노트북 마이크 + ESP32 연동 실시간 정수기 수위 모니터
+-------------------------------------------------------------------------
 사용법:
-    python3 realtime_esp32_mic_unet.py
+    pip install sounddevice
+    python realtime_noesp_mic.py
 
-특징:
-    1. 학습 완료된 2D U-Net 디노이저(models/denoiser_best.pth) 탑재.
-    2. ESP32 UDP 오디오 수신(포트 5005) 스트림 실시간 분석.
-    3. 실시간 1초 오디오 버퍼에 U-Net 잡음 필터 적용 및 처리 속도(ms) 측정.
-    4. 컵이 80% 가득 차면 자동으로 ESP32 서보모터 차단 서브 URL(/stop) 호출.
+컵 학습 방법:
+    1. 프로그램 실행
+    2. "새 컵 학습" 선택
+    3. 안내에 따라 빈 컵에 끝까지 물을 따르면서 마이크로 소리를 녹음
+    4. 학습 결과가 자동 저장됨 (이후부터는 빠른 로드 가능)
 """
 
 import os
 import sys
 import threading
 import time
-import socket
 
 import numpy as np
 import torch
+import sounddevice as sd
 import cv2
 import soundfile as sf
 import librosa
 import requests
 from transformers import Wav2Vec2FeatureExtractor
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 이 파일은 realtime/ 안에 있으므로 저장소 루트는 한 단계 위.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(ROOT_DIR)
 from demo.util import load_model, get_model_output, visualise_args
 import shared.utils as su
-from sound_of_water.audio_pitch.denoiser import AudioDenoisingWrapper
 
 # 모델 학습 시와 동일한 오디오 정규화기 (zero-mean, unit-variance)
 _feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-base-960h")
@@ -38,20 +40,20 @@ def preprocess_audio(audio_np: np.ndarray) -> torch.Tensor:
     inputs = _feature_extractor(
         audio_np, sampling_rate=SR, return_tensors="pt", padding=False
     )
+    # input_values: [1, L] → unsqueeze → [1, 1, L]
     return inputs.input_values.unsqueeze(0)
 
 
 # ============================================================
 # ▼▼▼ 설정 값 ▼▼▼
 # ============================================================
-ESP32_IP         = "20.30.88.125"  # ESP32 보드 IP 주소
 FILL_RATIO       = 0.55   # 몇 % 채워지면 멈출지 (지연 보완을 위해 55%로 하향)
 SR               = 16000  # 마이크 샘플링 레이트 (16kHz 고정)
 INFERENCE_INTERVAL = 1.0  # AI 추론 주기 (초)
-UDP_PORT         = 5005   # ESP32 오디오 수신 포트
+ESP32_IP         = "20.30.88.125"  # ESP32 IP 주소 (서보 모터 제어용)
 # ============================================================
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_cache")
+CACHE_DIR = os.path.join(ROOT_DIR, "calibration_cache")
 
 # 공유 상태
 shared = {
@@ -64,93 +66,34 @@ lock = threading.Lock()
 
 
 # ─────────────────────────────────────────────
-#  UDP 리스너 (백그라운드 스레드)
-# ─────────────────────────────────────────────
-def udp_listener():
-    UDP_IP = "0.0.0.0"
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((UDP_IP, UDP_PORT))
-    sock.settimeout(0.5)
-    print(f"📡 UDP 오디오 수신 소켓 생성 완료. (포트: {UDP_PORT})")
-    
-    while True:
-        with lock:
-            if not shared["running"]:
-                break
-        try:
-            data, addr = sock.recvfrom(4096)
-            audio_chunk = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-            with lock:
-                shared["audio_buffer"] = np.concatenate([shared["audio_buffer"], audio_chunk])
-        except socket.timeout:
-            continue
-        except Exception as e:
-            print(f"[UDP 수신 오류] {e}")
-            break
-    sock.close()
-
-
-# ─────────────────────────────────────────────
-#  배경 잡음 수집 (UDP Audio Buffer 기반)
-# ─────────────────────────────────────────────
-def capture_noise_profile_udp():
-    """ESP32 UDP 스트림으로부터 2초간 들어오는 배경 잡음(Noise Floor)을 수집하여 분석합니다."""
-    print("\n" + "="*58)
-    print("  [🔇 1단계: ESP32 원격 배경 소음(Noise Floor) 분석]")
-    print("="*58)
-    print("🔍 UDP 포트 5005번으로 수신되는 노이즈 데이터를 분석합니다.")
-    print("🔍 (2초간 조용히 해 주세요!)")
-    
-    # 버퍼 초기화 및 2초간 UDP 데이터 누적 대기
-    with lock:
-        shared["audio_buffer"] = np.array([], dtype=np.float32)
-        
-    time.sleep(2.0)
-    
-    with lock:
-        noise_data = shared["audio_buffer"].copy()
-        
-    if len(noise_data) == 0:
-        print("\n❌ [오류] ESP32로부터 유입된 오디오 데이터가 전혀 없습니다.")
-        print("   -> 1. ESP32 전원 및 와이파이 상태를 점검하세요.")
-        print("   -> 2. ESP32 코드에 등록한 pc_ip가 올바른지 확인하세요.")
-        print("   -> 3. Windows 방화벽이 UDP 5005 포트를 열어두었는지 확인하세요.")
-        return None
-        
-    rms = float(np.sqrt(np.mean(noise_data ** 2)))
-    print(f"[OK] ESP32 배경 소음 수집 성공! (샘플수: {len(noise_data)}, RMS: {rms:.5f})")
-    print("="*58)
-    return noise_data
-
-
-# ─────────────────────────────────────────────
 #  캐시 / 컵 선택 메뉴
 # ─────────────────────────────────────────────
+
 def list_caches():
     os.makedirs(CACHE_DIR, exist_ok=True)
     return sorted([f for f in os.listdir(CACHE_DIR) if f.endswith(".npz")])
 
 
-def select_or_create_cache(model, denoiser_model, device, noise_profile):
+def select_or_create_cache(model):
     """학습된 컵 목록을 보여주고 선택하거나, 새 컵을 학습한다."""
     caches = list_caches()
 
     print("\n" + "="*58)
-    print("  [컵 선택 메뉴 - ESP32 U-Net Denoise 모드]")
+    print("  [컵 선택 메뉴 - 노트북 마이크 모드]")
     for i, name in enumerate(caches):
         info = np.load(os.path.join(CACHE_DIR, name))
         l_max = float(info['l_max'])
         l_min = float(info['l_min'])
         print(f"  [{i+1}] {name.replace('_calibration.npz', '')}")
         print(f"       컵 높이: {l_max:.2f}cm | 꽉 찰 때: {l_min:.2f}cm")
-    print(f"  [0] 새 컵 학습 (마이크로 녹음)")
+    print(f"  [0] 새 컵 학습 (노트북 마이크로 녹음)")
     print("="*58)
 
     while True:
         try:
             ans = int(input(f"  번호 선택 (0~{len(caches)}): ").strip())
             if ans == 0:
-                return calibrate_new_cup(model, denoiser_model, device, noise_profile)
+                return calibrate_new_cup(model)
             elif 1 <= ans <= len(caches):
                 selected_path = os.path.join(CACHE_DIR, caches[ans - 1])
                 info = np.load(selected_path)
@@ -163,8 +106,51 @@ def select_or_create_cache(model, denoiser_model, device, noise_profile):
             print("  숫자를 입력해 주세요.")
 
 
+
+# ─────────────────────────────────────────────
+#  마이크 사전 검증
+# ─────────────────────────────────────────────
+
+def check_mic():
+    """마이크가 실제로 동작하는지 확인하고, 기본 배경 소음(noise_floor)을 측정합니다."""
+    print("\n🔍 노트북 마이크 연결 및 주변 노이즈 상태를 확인합니다... (2초간 아무 소리도 내지 마세요!)")
+    test_buf = []
+
+    def cb(indata, frames, t, status):
+        test_buf.append(indata[:, 0].copy().astype(np.float32))
+
+    try:
+        stream = sd.InputStream(samplerate=SR, channels=1, callback=cb)
+        stream.start()
+        time.sleep(2.0)
+        stream.stop()
+        stream.close()
+    except Exception as e:
+        print("\n❌ [오류] 마이크를 초기화할 수 없습니다.")
+        print("   → 마이크가 물리적으로 연결되어 있는지, 컴퓨터 설정에서 켜져 있는지 확인해 주세요.")
+        print(f"   상세 에러: {e}")
+        return False, 0.0
+
+    if not test_buf:
+        print("❌ 마이크에서 소리가 전혀 들어오지 않습니다.")
+        return False, 0.0
+
+    audio = np.concatenate(test_buf)
+    rms = float(np.sqrt(np.mean(audio ** 2)))
+
+    print(f"   측정된 배경 노이즈 레벨(RMS): {rms:.5f}")
+    if rms < 1e-5:
+        print("❌ 마이크가 감지됐지만 소리가 거의 0입니다. (음소거 상태일 수 있습니다)")
+        return False, 0.0
+
+    print("✅ 마이크 정상 작동 및 노이즈 측정 완료!")
+    return True, rms
+
+
 def validate_recording(audio_np, noise_rms):
-    """녹음된 오디오가 학습에 적합한지 판단합니다."""
+    """
+    녹음된 오디오가 학습에 적합한지 판단합니다.
+    """
     MIN_DURATION_S = 3.0   # 최소 녹음 길이
     MIN_RMS        = 5e-4  # 전체 최소 신호 레벨
     MIN_VAR_RATIO  = 0.10  # 앞/뒤 RMS 변화 비율 최솟값 (물이 차면 소리가 변해야 함)
@@ -177,10 +163,11 @@ def validate_recording(audio_np, noise_rms):
     if rms_total < MIN_RMS:
         return False, f"소리 신호가 너무 약합니다 (RMS={rms_total:.5f}). 마이크를 컵 가까이 대거나 볼륨을 높여 주세요."
 
-    # 노이즈 체크
+    # 노이즈 체크 (물소리가 주변 소음보다 압도적으로 커야 함)
     if rms_total < noise_rms * 1.5:
-        return False, f"물소리(RMS={rms_total:.5f})가 주변 환경 노이즈(RMS={noise_rms:.5f})에 완전히 묻혔습니다!"
+        return False, f"물소리(RMS={rms_total:.5f})가 주변 환경 노이즈(RMS={noise_rms:.5f})에 완전히 묻혔습니다!\n   마이크 게인을 조절하시거나, 주변(선풍기/PC 소음 등)을 조용하게 만든 뒤 다시 시도해 주세요."
 
+    # 앞 20% vs 뒤 20% 에너지 변화 (물이 차면 공명 주파수가 달라지므로 변화 있어야 함)
     n = len(audio_np)
     rms_start = float(np.sqrt(np.mean(audio_np[:n//5] ** 2)))
     rms_end   = float(np.sqrt(np.mean(audio_np[-n//5:] ** 2)))
@@ -189,91 +176,92 @@ def validate_recording(audio_np, noise_rms):
 
     var_ratio = abs(rms_start - rms_end) / max(rms_start, rms_end)
     if var_ratio < MIN_VAR_RATIO:
-        return False, (f"소리 변화가 너무 적습니다 (변화율={var_ratio:.1%}). 소음만 녹음된 것은 아닌지 확인해 주세요.")
+        return False, (f"소리 변화가 너무 적습니다 (변화율={var_ratio:.1%}). "
+                       "빈 컵에 물을 따르면서 소리가 변해야 합니다. 배경 소음만 녹음된 것은 아닌지 확인해 주세요.")
 
     return True, f"✅ 녹음 품질 양호! (길이={duration:.1f}s, RMS={rms_total:.5f}, 변화율={var_ratio:.1%})"
 
 
 # ─────────────────────────────────────────────
-#  새 컵 학습 (ESP32 녹음 → U-Net 디노이저 전처리 → AI 분석 → 캐시 저장)
+#  새 컵 학습 (마이크 녹음 → AI 분석 → 캐시 저장)
 # ─────────────────────────────────────────────
-def calibrate_new_cup(model, denoiser_model, device, noise_profile):
-    """ESP32 UDP 마이크를 통해 새 컵 물 따르는 소리를 수집하고 U-Net 필터를 입혀 분석 후 캐시 저장."""
+
+def calibrate_new_cup(model):
+    """마이크로 새 컵에 물 따르는 소리를 녹음하고 AI로 분석해 캐시를 저장한다."""
 
     cup_name = input("\n  새 컵 이름을 입력하세요 (예: tall_glass, mug): ").strip().replace(" ", "_")
     if not cup_name:
         cup_name = "new_cup"
 
     print("\n" + "="*58)
-    print("  [새 컵 학습 모드 (ESP32 무선 마이크 + U-Net 전처리)]")
+    print("  [새 컵 학습 모드 (노트북 마이크)]")
     print("="*58)
 
-    noise_rms = 0.005
-    if noise_profile is not None:
-        noise_rms = float(np.sqrt(np.mean(noise_profile ** 2)))
+    # ① 마이크 연결 사전 검사 및 주변 소음(노이즈) 측정
+    noise_rms = 0.0
+    while True:
+        ok, measured_noise = check_mic()
+        if ok:
+            noise_rms = measured_noise
+            break
+        retry = input("  마이크 문제를 해결한 후 다시 시도하시겠습니까? [Y/n]: ").strip().lower()
+        if retry in ('n', 'no'):
+            sys.exit(1)
 
     print("\n  준비되면 Enter를 누르고, 빈 컵에 물을 끝까지 따르세요.")
     print("  물 따르기가 완전히 끝나면 다시 Enter를 누르세요.")
     input("  ▶ 준비됐으면 Enter ▶ ")
 
-    # ESP32 녹음 시작
+    # 마이크 녹음 시작
     print("🎙️  [녹음 시작] 지금 컵에 물을 따르세요...")
-    with lock:
-        shared["audio_buffer"] = np.array([], dtype=np.float32)
-        
-    input("  ⏹  물을 다 따랐으면 Enter ▶ ")
-    
-    with lock:
-        audio_np = shared["audio_buffer"].copy()
+    rec_buffer = []
 
-    if len(audio_np) == 0:
-        print("[ERROR] 수집된 오디오 데이터가 없습니다.")
+    def rec_callback(indata, frames, t, status):
+        rec_buffer.append(indata[:, 0].copy().astype(np.float32))
+
+    try:
+        stream = sd.InputStream(samplerate=SR, channels=1, callback=rec_callback)
+        stream.start()
+        input("  ⏹  물을 다 따랐으면 Enter ▶ ")
+        stream.stop()
+        stream.close()
+    except Exception as e:
+        print("\n❌ [오류] 마이크 접근 실패 또는 녹음 중 연결이 끊겼습니다.")
+        print(f"   상세 에러: {e}")
         sys.exit(1)
 
+    if not rec_buffer:
+        print("[ERROR] 녹음된 오디오가 없습니다.")
+        sys.exit(1)
+
+    audio_np = np.concatenate(rec_buffer)
     duration = len(audio_np) / SR
     print(f"  총 {duration:.1f}초 녹음 완료.")
 
-    # 2. 녹음 품질 검증
+    # ② 녹음 품질 검증 (노이즈 대비 물소리 크기 확인)
     ok, msg = validate_recording(audio_np, noise_rms)
     if not ok:
         print(f"\n⚠️  녹음 품질 문제: {msg}")
         retry = input("  다시 녹음하시겠습니까? [Y/n]: ").strip().lower()
         if retry not in ('n', 'no'):
-            return calibrate_new_cup(model, denoiser_model, device, noise_profile)
+            return calibrate_new_cup(model)  # 재귀 호출로 처음부터 다시
         else:
             print("학습을 취소합니다.")
             sys.exit(1)
     print(msg)
 
-    # 3. U-Net 디노이저 전처리 적용 (1초 크기 청크 분할)
-    print("\n⚡ 무선 녹음 데이터에 2D U-Net 잡음 제거 필터를 입히는 중입니다...")
-    t_start = time.time()
-    
-    length = len(audio_np)
-    win_samples = 16000
-    num_chunks = int(np.ceil(length / win_samples))
-    pad_len = num_chunks * win_samples - length
-    audio_padded = np.pad(audio_np, (0, pad_len))
-    
-    chunks = audio_padded.reshape(1, num_chunks, 1, win_samples)
-    chunks_tensor = torch.tensor(chunks, dtype=torch.float32).to(device)
-    
-    with torch.no_grad():
-        denoised_chunks_tensor = denoiser_model(chunks_tensor)
-        
-    denoised_padded = denoised_chunks_tensor.cpu().numpy().reshape(-1)
-    audio_np = denoised_padded[:length]
-    t_end = time.time()
-    print(f"✅ U-Net 잡음 제거 완료! (처리 소요시간: {(t_end - t_start)*1000:.1f}ms)")
+    # AI로 수위 분석
+    print("\n🧠 AI가 녹음된 소리를 분석합니다... (잠시만 기다려 주세요)")
 
-    # 4. AI로 수위 분석
-    print("\n🧠 AI가 정제된 소리에서 컵 높이를 추적 중입니다...")
     from demo.util import load_audio_tensor
 
+    # 임시 WAV 파일로 저장
     tmp_wav = os.path.join(CACHE_DIR, f"_tmp_{cup_name}.wav")
     os.makedirs(CACHE_DIR, exist_ok=True)
     sf.write(tmp_wav, audio_np, SR)
+    print(f"  임시 WAV 저장: {tmp_wav}")
 
+    # simulate_stop.py와 동일한 전처리 파이프라인
     audio_tensor = load_audio_tensor(tmp_wav)
 
     with torch.no_grad():
@@ -284,22 +272,27 @@ def calibrate_new_cup(model, denoiser_model, device, noise_profile):
         l_preds = su.physics.estimate_length_of_air_column(wavelengths_tensor).numpy()
 
     wavelengths_np = wavelengths_tensor.cpu().numpy()
+
+    # 임시 파일 삭제
     os.remove(tmp_wav)
 
+    # 수위 범위 산출
     l_max = float(np.max(l_preds))
     l_min = float(np.mean(l_preds[-10:]))
     print(f"[정보] 컵 범위: {l_max:.2f}cm (빈) ~ {l_min:.2f}cm (꽉 참)")
 
-    # 5. Mel 스펙트로그램 윈도우 추출 및 저장
+    # ─────────────────────────────────────────────
+    # Mel 스펙트로그램 윈도우 저장 (1초 간격 반영)
+    # ─────────────────────────────────────────────
     MEL_WINDOW_S = 1.0
-    MEL_HOP_S    = 1.0
+    MEL_HOP_S    = 1.0   # 1초 간격으로 큼직하게 (사용자 요청)
     N_MELS       = 64
     win_samples  = int(MEL_WINDOW_S * SR)
     hop_samples  = int(MEL_HOP_S    * SR)
 
     mel_windows_list   = []
     lpred_per_window   = []
-    rms_per_window     = []
+    rms_per_window     = []  # ★ 음량 정보 추가
 
     n_frames_total = len(l_preds)
     timestamps_eval = librosa.frames_to_time(
@@ -311,8 +304,9 @@ def calibrate_new_cup(model, denoiser_model, device, noise_profile):
 
     for start in range(0, len(audio_np) - win_samples + 1, hop_samples):
         chunk = audio_np[start : start + win_samples]
+        # RMS 계산
         c_rms = float(np.sqrt(np.mean(chunk ** 2)))
-        
+        # Mel 계산
         mel   = librosa.feature.melspectrogram(y=chunk, sr=SR, n_mels=N_MELS, fmax=8000)
         mel_db = librosa.power_to_db(mel, ref=np.max)
         mel_feat = mel_db.mean(axis=1)
@@ -327,6 +321,9 @@ def calibrate_new_cup(model, denoiser_model, device, noise_profile):
     mel_windows_arr  = np.array(mel_windows_list, dtype=np.float32)
     lpred_win_arr    = np.array(lpred_per_window, dtype=np.float32)
     rms_win_arr      = np.array(rms_per_window, dtype=np.float32)
+
+    print(f"[정보] Mel 윈도우({MEL_HOP_S}s 간격) 생성 완료: {len(mel_windows_arr)}개")
+    print(f"      평균 음량(RMS): {rms_win_arr.mean():.5f}")
 
     # 코사인 유사도를 위한 사전 정규화
     norms = np.linalg.norm(mel_windows_arr, axis=1, keepdims=True) + 1e-8
@@ -345,18 +342,34 @@ def calibrate_new_cup(model, denoiser_model, device, noise_profile):
         mel_windows_norm = mel_windows_norm,
         lpred_per_window = lpred_win_arr,
         rms_per_window   = rms_win_arr,
-        noise_rms        = noise_rms,
+        noise_rms        = noise_rms,          # ★ 배경 노이즈 레벨 저장
     )
-    print(f"💾 학습 결과 및 노이즈 필터링 템플릿 저장 완료: {cache_path}\n")
+    print(f"💾 학습 결과 저장 완료 (RMS 포함): {cache_path}\n")
 
     return l_max, cache_path
 
 
+
 # ─────────────────────────────────────────────
-#  실시간 Mel 스펙트로그램 매칭 스레드 (실시간 U-Net 적용)
+#  마이크 콜백 (실시간 녹음)
 # ─────────────────────────────────────────────
-def ai_worker(model, denoiser_model, device, l_max, threshold, cache_path, noise_profile):
-    """ESP32 UDP 오디오 신호에 U-Net 모델을 실시간 적용하여 템플릿 비교 및 수위를 추정합니다."""
+
+def mic_callback(indata, frames, time_info, status):
+    audio_chunk = indata[:, 0].astype(np.float32)
+    with lock:
+        shared["audio_buffer"] = np.concatenate([shared["audio_buffer"], audio_chunk])
+
+
+# ─────────────────────────────────────────────
+#  실시간 Mel 스펙트로그램 매칭 스레드
+# ─────────────────────────────────────────────
+
+def ai_worker(model, l_max, threshold, cache_path):
+    """
+    캘리브레이션 때 저장한 1초 Mel 스펙트로그램과 실시간 마이크 오디오를 비교하여 수위를 추정합니다.
+    - Mel 스펙트로그램 코사인 유사도로 가장 비슷한 시점의 수위를 예측
+    - 물리적 제약 (1.5cm/초) + 연속 확인 (2회)으로 노이즈 오작동 방지
+    """
     data = np.load(cache_path)
 
     if 'mel_windows_norm' not in data:
@@ -365,33 +378,30 @@ def ai_worker(model, denoiser_model, device, l_max, threshold, cache_path, noise
             shared["running"] = False
         return
 
-    mel_calib_norm   = data['mel_windows_norm']
-    lpred_per_window = data['lpred_per_window']
+    mel_calib_norm   = data['mel_windows_norm']   # [N_win, N_MELS]
+    lpred_per_window = data['lpred_per_window']   # [N_win]
     N_MELS   = mel_calib_norm.shape[1]
     WINDOW_S = 1.0
 
-    # 저장된 노이즈 레벨 기준 대기 임계치
-    noise_rms = float(data['noise_rms']) if 'noise_rms' in data else 0.0005
-    silence_threshold = max(3e-4, noise_rms * 1.5)
-
-    print(f"[Mel Matcher] 템플릿 {len(mel_calib_norm)}개 로드 완료.")
-    print(f"  목표 수위 임계치: {threshold:.2f}cm 이하")
-    print(f"  소리 감지 임계치: {silence_threshold:.5f}")
-    print("  준비 완료! 컵에 물을 부어 주세요!\n")
+    print(f"[Mel Matcher] 윈도우 {len(mel_calib_norm)}개 로드 (N_MELS={N_MELS})")
+    print(f"  수위 범위: {lpred_per_window.max():.1f}cm ~ {lpred_per_window.min():.1f}cm")
+    print(f"  수위 임계치(목표 공간): {threshold:.2f}cm 이하")
+    print("  컵에 물을 부어 주세요!\n")
 
     # ESP32 서보모터 밸브 오픈 신호 전송
     try:
         print(f"📡 ESP32 SG90 서보모터 밸브 오픈 신호 전송 중... (http://{ESP32_IP}/open)")
         headers = {'Connection': 'close', 'User-Agent': 'Mozilla/5.0'}
         response = requests.get(f"http://{ESP32_IP}/open", headers=headers, timeout=3)
-        print(f"✅ ESP32 밸브 오픈 성공! (응답 코드: {response.status_code})")
+        print(f"✅ ESP32 밸브(서보모터) 오픈 성공! (응답 코드: {response.status_code})")
     except Exception as e:
         print(f"❌ 밸브 오픈 통신 지연/에러 발생 (에러 무시 후 분석 진행): {e}")
 
     consecutive_below = 0
-    accepted_pred = l_max
-    MAX_CHANGE = 3.0
+    accepted_pred = l_max  # 빈 컵에서 시작
+    MAX_CHANGE = 3.0  # cm — 1초당 허용되는 최대 수위 변화 (Mel 윈도우 간격 고려)
     CONFIRM_COUNT_REQUIRED = 2
+    water_start_time = None
 
     while True:
         with lock:
@@ -411,26 +421,17 @@ def ai_worker(model, denoiser_model, device, l_max, threshold, cache_path, noise
         chunk     = buf[-int(WINDOW_S * SR):]
         chunk_rms = float(np.sqrt(np.mean(chunk ** 2)))
 
-        if chunk_rms < silence_threshold:
-            print(f"[UNet Matcher] t={t_elapsed:.1f}s | 소리 대기 중... (RMS={chunk_rms:.5f})")
+        if chunk_rms < 3e-4:
+            print(f"[Mel] t={t_elapsed:.1f}s | 소리 대기 중... (RMS={chunk_rms:.5f})")
             time.sleep(INFERENCE_INTERVAL)
             continue
 
-        # ----------------------------------------------------
-        #  [실시간 U-Net 디노이저 통과 및 속도 측정]
-        # ----------------------------------------------------
-        t_start = time.time()
-        
-        chunk_tensor = torch.tensor(chunk, dtype=torch.float32).unsqueeze(0).unsqueeze(0).unsqueeze(0).to(device)
-        with torch.no_grad():
-            clean_chunk_tensor = denoiser_model(chunk_tensor)
-        chunk = clean_chunk_tensor.squeeze().cpu().numpy()
-        
-        t_end = time.time()
-        t_denoise_ms = (t_end - t_start) * 1000
-        # ----------------------------------------------------
+        # 물 흘러내림(소리 감지) 시작 절대 시간 기록
+        if water_start_time is None:
+            water_start_time = t_elapsed
+            print(f"💧 물 흘러내림 감지 시작! (기준 시간: {water_start_time:.1f}초)")
 
-        # ① Mel 특징 추출 및 코사인 유사도
+        # ① Mel 스펙트로그램 계산 및 코사인 유사도 비교
         mel_live = librosa.feature.melspectrogram(y=chunk, sr=SR, n_mels=N_MELS, fmax=8000)
         mel_feat = librosa.power_to_db(mel_live, ref=np.max).mean(axis=1)
 
@@ -441,37 +442,48 @@ def ai_worker(model, denoiser_model, device, l_max, threshold, cache_path, noise
         best_idx = int(np.argmax(sims))
         raw_pred = float(lpred_per_window[best_idx])
 
-        # ② 물리적 급격한 변동 제약 체크
+        # ② 물리적 타당성 검사: 1초 만에 수위가 1.5cm 이상 변할 수 없음
         delta = abs(raw_pred - accepted_pred)
         if delta > MAX_CHANGE:
-            print(f"[UNet Matcher] t={t_elapsed:.1f}s | [Denoise Latency: {t_denoise_ms:.1f}ms] | (Δ={delta:.1f}cm > {MAX_CHANGE}) -> Hold ({accepted_pred:.2f}cm)")
+            # 변화가 너무 크면 노이즈 → 이전 값 유지
+            print(f"[Mel] t={t_elapsed:.1f}s | sim={sims[best_idx]:.3f} | (Δ={delta:.1f}cm > {MAX_CHANGE}) → Hold ({accepted_pred:.2f}cm) | RMS={chunk_rms:.5f}")
             consecutive_below = 0
             with lock:
                 shared["current_l_pred"] = accepted_pred
             time.sleep(INFERENCE_INTERVAL)
             continue
 
+        # ③ 타당한 예측 → 채택
         accepted_pred = raw_pred
 
-        # ③ 연속 확인 카운터
+        # ④ 연속 확인 카운터 — 연속 2회 이상 임계치 이하여야 정지
         if accepted_pred <= threshold:
             consecutive_below += 1
         else:
             consecutive_below = 0
 
         below_status = f" [{consecutive_below}/{CONFIRM_COUNT_REQUIRED}]" if accepted_pred <= threshold else ""
-        print(f"[UNet Matcher] t={t_elapsed:.1f}s | [Denoise Latency: {t_denoise_ms:.1f}ms] | Space: {accepted_pred:.2f}cm (목표: {threshold:.2f}cm) | RMS={chunk_rms:.5f}{below_status}")
+        print(f"[Mel] t={t_elapsed:.1f}s | sim={sims[best_idx]:.3f} → Space: {accepted_pred:.2f}cm (thr: {threshold:.2f}cm) | RMS={chunk_rms:.5f}{below_status}")
 
         trigger_stop = False
         with lock:
             shared["current_l_pred"] = accepted_pred
-            if consecutive_below >= CONFIRM_COUNT_REQUIRED and t_elapsed > 5.0 and not shared["is_stopped"]:
+            t_pour = t_elapsed - water_start_time if water_start_time is not None else 0.0
+            if consecutive_below >= CONFIRM_COUNT_REQUIRED and t_pour > 1.0 and not shared["is_stopped"]:
                 trigger_stop = True
 
         if trigger_stop:
-            print(f"\n⚠️ 수위 임계치 도달! 정수기 자동 정지 신호를 쏩니다. ({accepted_pred:.2f}cm ≤ {threshold:.2f}cm)")
+            print(f"\n⚠️ 수위 임계치 도달! ({accepted_pred:.2f}cm ≤ {threshold:.2f}cm)")
             with lock:
                 shared["is_stopped"] = True
+
+            # 🔊 음성 경고 (Mac 'say' 명령어 사용 - 비동기 실행)
+            try:
+                import subprocess
+                subprocess.Popen(["say", "물이 다 찼습니다. 멈추세요."])
+            except Exception as e:
+                print(f"🔊 음성 경고 출력 실패: {e}")
+
             try:
                 print(f"📡 ESP32 SG90 서보모터 정지 신호 전송 중... (http://{ESP32_IP}/stop)")
                 headers = {'Connection': 'close', 'User-Agent': 'Mozilla/5.0'}
@@ -481,7 +493,8 @@ def ai_worker(model, denoiser_model, device, l_max, threshold, cache_path, noise
                 else:
                     print(f"❌ ESP32 응답 코드: {response.status_code}")
             except Exception as e:
-                print(f"❌ 통신 에러: {e} -> 수동으로 밸브를 잠가 주세요!")
+                print(f"❌ 통신 에러: {e}")
+                print("   → 수동으로 밸브를 잠가 주세요!")
             print("🚨 [AUTO STOP] 시스템 정지 완료.")
 
         time.sleep(INFERENCE_INTERVAL)
@@ -490,6 +503,7 @@ def ai_worker(model, denoiser_model, device, l_max, threshold, cache_path, noise
 # ─────────────────────────────────────────────
 #  OpenCV 디스플레이
 # ─────────────────────────────────────────────
+
 def display_loop(l_max, threshold):
     win_w, win_h = 600, 400
 
@@ -498,25 +512,20 @@ def display_loop(l_max, threshold):
             l_pred = shared["current_l_pred"]
             is_stopped = shared["is_stopped"]
             t_elapsed = len(shared["audio_buffer"]) / SR
-            is_running = shared["running"]
-
-        if not is_running:
-            break
 
         canvas = np.zeros((win_h, win_w, 3), dtype=np.uint8)
 
-        cv2.putText(canvas, "ESP32 UDP Monitor [U-Net Denoised]", (30, 40),
+        cv2.putText(canvas, "Real-Time Laptop Mic Monitor", (30, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
-        cv2.putText(canvas, "Filter: PyTorch 2D U-Net Model", (30, 65),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 120), 1)
-        cv2.putText(canvas, f"Recording: {t_elapsed:.1f} s", (30, 95),
+        cv2.putText(canvas, f"Recording: {t_elapsed:.1f} s", (30, 75),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 1)
 
         if l_pred is not None:
-            cv2.putText(canvas, f"Empty Space: {l_pred:.2f} cm", (30, 140),
+            cv2.putText(canvas, f"Empty Space: {l_pred:.2f} cm", (30, 130),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
 
-            bar_x, bar_y, bar_w, bar_h = 30, 170, win_w - 60, 60
+            # 수위 바 (l_max 기준 채워진 비율)
+            bar_x, bar_y, bar_w, bar_h = 30, 160, win_w - 60, 60
             fill_frac = min(max((l_max - l_pred) / l_max, 0.0), 1.0)
             filled_w = int(bar_w * fill_frac)
             bar_color = (0, 200, 255) if not is_stopped else (0, 0, 255)
@@ -529,7 +538,7 @@ def display_loop(l_max, threshold):
                         (bar_x, bar_y + bar_h + 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 200, 100), 1)
         else:
-            cv2.putText(canvas, "Listening UDP... (waiting for audio buffer)", (30, 160),
+            cv2.putText(canvas, "Listening... (waiting for audio buffer)", (30, 150),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 100, 100), 1)
 
         if is_stopped:
@@ -545,7 +554,7 @@ def display_loop(l_max, threshold):
         cv2.putText(canvas, "Press 'q' to quit", (win_w - 200, win_h - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
 
-        cv2.imshow("ESP32 UDP Monitor [U-Net Denoised]", canvas)
+        cv2.imshow("Mic Water Level Monitor", canvas)
         try:
             if cv2.waitKey(100) & 0xFF == ord('q'):
                 with lock:
@@ -562,60 +571,43 @@ def display_loop(l_max, threshold):
 # ─────────────────────────────────────────────
 #  메인
 # ─────────────────────────────────────────────
+
 def main():
     print("=" * 58)
-    print("   🎙️  실시간 ESP32 UDP 수위 모니터 [U-Net 디노이저 통합]   ")
+    print("   🎙️  실시간 노트북 마이크 수위 모니터 (ESP32 연동)   ")
     print("=" * 58)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"🖥️ Using hardware device: {device}")
-
-    # 1. AI 백본 모델 로드
-    print("[1단계: AI 수위 판단 백본 모델 로딩 중...]")
+    # AI 모델은 항상 먼저 로드 (학습에도, 추론에도 필요)
+    print("\n[AI 모델 로딩 중... 잠시만 기다려 주세요]")
     model = load_model()
-    print("[AI 백본 모델 로딩 완료!]")
+    print("[AI 모델 로딩 완료!]")
 
-    # 2. U-Net 디노이저 모델 로드
-    print("\n[2단계: U-Net 디노이저 전처리 모델 로딩 중...]")
-    denoiser_model = AudioDenoisingWrapper().to(device)
-    ckpt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "denoiser_best.pth")
-    if os.path.exists(ckpt_path):
-        denoiser_model.unet.load_state_dict(torch.load(ckpt_path, map_location=device))
-        denoiser_model.eval()
-        print(f"✅ 디노이저 가중치 로드 성공: {ckpt_path}")
-    else:
-        print(f"❌ [에러] 디노이저 가중치 파일을 찾을 수 없습니다: {ckpt_path}")
-        return
-    print("[U-Net 디노이저 로딩 완료!]")
-
-    # 3. UDP 리스너 시작 (배경 잡음 캡처 전 수신 시작)
-    listener_thread = threading.Thread(target=udp_listener, daemon=True)
-    listener_thread.start()
-    print(f"🎙️  ESP32 UDP 수신 대기 시작 (포트: {UDP_PORT})")
-    time.sleep(1.0)
-
-    # 4. 배경 소음 측정
-    noise_profile = capture_noise_profile_udp()
-
-    # 5. 컵 선택 (캐시 로드 or 새 컵 학습)
-    l_max, cache_path = select_or_create_cache(model, denoiser_model, device, noise_profile)
+    # 컵 선택 (기존 캐시 재사용 or 새 컵 마이크 학습)
+    l_max, cache_path = select_or_create_cache(model)
     threshold = l_max * (1.0 - FILL_RATIO)
 
-    # 6. 특징 매칭 백그라운드 스레드 가동
-    worker = threading.Thread(
-        target=ai_worker, 
-        args=(model, denoiser_model, device, l_max, threshold, cache_path, noise_profile), 
-        daemon=True
-    )
+    # 마이크 스트림 시작
+    try:
+        stream = sd.InputStream(samplerate=SR, channels=1, callback=mic_callback)
+        stream.start()
+        print(f"🎙️  실시간 노트북 마이크 리스닝 시작! (샘플레이트: {SR}Hz)")
+    except Exception as e:
+        print("\n❌ [치명적 오류] 마이크를 찾을 수 없거나 접근이 거부되었습니다.")
+        print("   → USB 마이크나 노트북 내장 마이크가 제대로 연결되어 있는지 확인해 주세요.")
+        print(f"   상세 에러: {e}")
+        return
+
+    # 특징 매칭 백그라운드 스레드 (무거운 AI 재추론 없음)
+    worker = threading.Thread(target=ai_worker, args=(model, l_max, threshold, cache_path), daemon=True)
     worker.start()
 
-    # 7. 디스플레이 (메인 스레드)
+    # 디스플레이 (메인 스레드)
     display_loop(l_max, threshold)
 
-    # 8. 종료 프로세스
-    with lock:
-        shared["running"] = False
-    print("\n🛑 스트리밍 종료.")
+    # 종료
+    stream.stop()
+    stream.close()
+    print("\n🛑 마이크 스트리밍 종료.")
 
 
 if __name__ == "__main__":

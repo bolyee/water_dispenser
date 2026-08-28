@@ -29,8 +29,9 @@ import torchvision.transforms as transforms
 from torchvision.models import resnet18, ResNet18_Weights
 
 # 프로젝트 루트 경로 설정
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR = os.path.join(BASE_DIR, "calibration_cache")
+# 이 파일은 realtime/ 안에 있으므로 저장소 루트는 한 단계 위.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CACHE_DIR = os.path.join(ROOT_DIR, "calibration_cache")
 
 # 기본 설정값
 DEFAULT_ML_THRESHOLD = 0.80     # ResNet-18 코사인 유사도 기본 임계값

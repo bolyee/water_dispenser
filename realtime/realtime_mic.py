@@ -1,9 +1,9 @@
 """
-realtime_noesp_mic.py  —  노트북 마이크 + ESP32 연동 실시간 정수기 수위 모니터
--------------------------------------------------------------------------
+realtime_mic.py  —  마이크 기반 실시간 정수기 수위 모니터
+--------------------------------------------------------------
 사용법:
     pip install sounddevice
-    python realtime_noesp_mic.py
+    python realtime_mic.py
 
 컵 학습 방법:
     1. 프로그램 실행
@@ -26,7 +26,9 @@ import librosa
 import requests
 from transformers import Wav2Vec2FeatureExtractor
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 이 파일은 realtime/ 안에 있으므로 저장소 루트는 한 단계 위.
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(ROOT_DIR)
 from demo.util import load_model, get_model_output, visualise_args
 import shared.utils as su
 
@@ -48,10 +50,9 @@ def preprocess_audio(audio_np: np.ndarray) -> torch.Tensor:
 FILL_RATIO       = 0.55   # 몇 % 채워지면 멈출지 (지연 보완을 위해 55%로 하향)
 SR               = 16000  # 마이크 샘플링 레이트 (16kHz 고정)
 INFERENCE_INTERVAL = 1.0  # AI 추론 주기 (초)
-ESP32_IP         = "20.30.88.125"  # ESP32 IP 주소 (서보 모터 제어용)
 # ============================================================
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_cache")
+CACHE_DIR = os.path.join(ROOT_DIR, "calibration_cache")
 
 # 공유 상태
 shared = {
@@ -77,14 +78,14 @@ def select_or_create_cache(model):
     caches = list_caches()
 
     print("\n" + "="*58)
-    print("  [컵 선택 메뉴 - 노트북 마이크 모드]")
+    print("  [컵 선택 메뉴]")
     for i, name in enumerate(caches):
         info = np.load(os.path.join(CACHE_DIR, name))
         l_max = float(info['l_max'])
         l_min = float(info['l_min'])
         print(f"  [{i+1}] {name.replace('_calibration.npz', '')}")
         print(f"       컵 높이: {l_max:.2f}cm | 꽉 찰 때: {l_min:.2f}cm")
-    print(f"  [0] 새 컵 학습 (노트북 마이크로 녹음)")
+    print(f"  [0] 새 컵 학습 (마이크로 녹음)")
     print("="*58)
 
     while True:
@@ -111,7 +112,7 @@ def select_or_create_cache(model):
 
 def check_mic():
     """마이크가 실제로 동작하는지 확인하고, 기본 배경 소음(noise_floor)을 측정합니다."""
-    print("\n🔍 노트북 마이크 연결 및 주변 노이즈 상태를 확인합니다... (2초간 아무 소리도 내지 마세요!)")
+    print("\n🔍 마이크 연결 및 주변 노이즈 상태를 확인합니다... (2초간 아무 소리도 내지 마세요!)")
     test_buf = []
 
     def cb(indata, frames, t, status):
@@ -192,7 +193,7 @@ def calibrate_new_cup(model):
         cup_name = "new_cup"
 
     print("\n" + "="*58)
-    print("  [새 컵 학습 모드 (노트북 마이크)]")
+    print("  [새 컵 학습 모드]")
     print("="*58)
 
     # ① 마이크 연결 사전 검사 및 주변 소음(노이즈) 측정
@@ -249,6 +250,8 @@ def calibrate_new_cup(model):
     print(msg)
 
     # AI로 수위 분석
+    # → 마이크 raw 오디오를 WAV 파일로 저장하고,
+    #   simulate_stop.py와 완전히 동일한 load_audio_tensor() 파이프라인을 통과시킵니다.
     print("\n🧠 AI가 녹음된 소리를 분석합니다... (잠시만 기다려 주세요)")
 
     from demo.util import load_audio_tensor
@@ -388,9 +391,9 @@ def ai_worker(model, l_max, threshold, cache_path):
 
     # ESP32 서보모터 밸브 오픈 신호 전송
     try:
-        print(f"📡 ESP32 SG90 서보모터 밸브 오픈 신호 전송 중... (http://{ESP32_IP}/open)")
+        print("📡 ESP32 SG90 서보모터 밸브 오픈 신호 전송 중... (http://192.168.0.250/open)")
         headers = {'Connection': 'close', 'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(f"http://{ESP32_IP}/open", headers=headers, timeout=3)
+        response = requests.get("http://192.168.0.250/open", headers=headers, timeout=3)
         print(f"✅ ESP32 밸브(서보모터) 오픈 성공! (응답 코드: {response.status_code})")
     except Exception as e:
         print(f"❌ 밸브 오픈 통신 지연/에러 발생 (에러 무시 후 분석 진행): {e}")
@@ -474,18 +477,10 @@ def ai_worker(model, l_max, threshold, cache_path):
             print(f"\n⚠️ 수위 임계치 도달! ({accepted_pred:.2f}cm ≤ {threshold:.2f}cm)")
             with lock:
                 shared["is_stopped"] = True
-
-            # 🔊 음성 경고 (Mac 'say' 명령어 사용 - 비동기 실행)
             try:
-                import subprocess
-                subprocess.Popen(["say", "물이 다 찼습니다. 멈추세요."])
-            except Exception as e:
-                print(f"🔊 음성 경고 출력 실패: {e}")
-
-            try:
-                print(f"📡 ESP32 SG90 서보모터 정지 신호 전송 중... (http://{ESP32_IP}/stop)")
+                print("📡 ESP32 SG90 서보모터 정지 신호 전송 중... (http://192.168.0.250/stop)")
                 headers = {'Connection': 'close', 'User-Agent': 'Mozilla/5.0'}
-                response = requests.get(f"http://{ESP32_IP}/stop", headers=headers, timeout=5)
+                response = requests.get("http://192.168.0.250/stop", headers=headers, timeout=5)
                 if response.status_code == 200:
                     print(f"✅ ESP32 밸브(서보모터) 물리적 잠금 성공!")
                 else:
@@ -513,7 +508,7 @@ def display_loop(l_max, threshold):
 
         canvas = np.zeros((win_h, win_w, 3), dtype=np.uint8)
 
-        cv2.putText(canvas, "Real-Time Laptop Mic Monitor", (30, 40),
+        cv2.putText(canvas, "Real-Time Mic Water Level Monitor", (30, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
         cv2.putText(canvas, f"Recording: {t_elapsed:.1f} s", (30, 75),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 1)
@@ -572,7 +567,7 @@ def display_loop(l_max, threshold):
 
 def main():
     print("=" * 58)
-    print("   🎙️  실시간 노트북 마이크 수위 모니터 (ESP32 연동)   ")
+    print("   🎙️  실시간 마이크 정수기 수위 모니터   ")
     print("=" * 58)
 
     # AI 모델은 항상 먼저 로드 (학습에도, 추론에도 필요)
@@ -588,10 +583,10 @@ def main():
     try:
         stream = sd.InputStream(samplerate=SR, channels=1, callback=mic_callback)
         stream.start()
-        print(f"🎙️  실시간 노트북 마이크 리스닝 시작! (샘플레이트: {SR}Hz)")
+        print(f"🎙️  실시간 리스닝 시작! (샘플레이트: {SR}Hz)")
     except Exception as e:
         print("\n❌ [치명적 오류] 마이크를 찾을 수 없거나 접근이 거부되었습니다.")
-        print("   → USB 마이크나 노트북 내장 마이크가 제대로 연결되어 있는지 확인해 주세요.")
+        print("   → 발표 및 시연 전에 USB 마이크나 노트북 내장 마이크가 제대로 연결되어 있는지 다시 한번 확인해 주세요.")
         print(f"   상세 에러: {e}")
         return
 

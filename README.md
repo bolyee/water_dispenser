@@ -46,16 +46,44 @@ ESP32 서보모터로 밸브를 자동 차단하는 시스템입니다.
 
 ---
 
+## 🗂️ 폴더 구조
+
+```
+water_dispenser/
+├── firmware/                  ESP32 아두이노 스케치
+├── realtime/                  실시간 실행 스크립트 (메인)
+├── tests_and_simulations/     평가·시뮬레이션·단위 테스트
+├── dataset_tools/             데이터셋 수집 및 소음 합성
+├── calibration_cache/         컵별 공명 템플릿 (.npz)
+├── docs/                      문서 및 발표 자료
+├── scripts/                   Windows 배치 스크립트
+│
+└── 원본 SoundOfWater 코드 (수정하지 않음)
+    ├── sound_of_water/        모델 정의 (+ 직접 추가한 denoiser.py)
+    ├── demo/                  Gradio 데모 및 모델 로딩 유틸
+    ├── shared/                공용 유틸리티
+    ├── models/                체크포인트
+    ├── media_assets/          데모용 예제 영상
+    └── playground.ipynb       원본 분석 노트북
+```
+
+모든 스크립트는 **저장소 루트 기준**으로 경로를 계산하므로, 어느 위치에서
+실행해도 `calibration_cache/`와 `models/`를 정상적으로 찾습니다.
+
+---
+
 ## 📁 직접 작성한 파일 설명
 
-### 펌웨어 (ESP32 / Arduino)
+### 펌웨어 — `firmware/`
+
+아두이노 IDE 규칙상 스케치는 파일명과 같은 이름의 폴더 안에 있어야 합니다.
 
 | 파일 | 설명 |
 | --- | --- |
-| `esp32_servo_i2s_mic.ino` | **메인 펌웨어.** INMP441 I2S 마이크를 32bit로 읽어 16kHz 16bit PCM으로 변환 후 PC로 UDP(5005) 전송. 동시에 HTTP 서버를 열어 `/open`, `/stop` 요청으로 SG90 서보 밸브 제어. |
-| `esp32_servo.ino` | 서보 제어만 하는 최소 버전. 배선·서보 각도 확인용. |
+| `firmware/esp32_servo_i2s_mic/` | **메인 펌웨어.** INMP441 I2S 마이크를 32bit로 읽어 16kHz 16bit PCM으로 변환 후 PC로 UDP(5005) 전송. 동시에 HTTP 서버를 열어 `/open`, `/stop` 요청으로 SG90 서보 밸브 제어. |
+| `firmware/esp32_servo/` | 서보 제어만 하는 최소 버전. 배선·서보 각도 확인용. |
 
-### 실시간 실행 스크립트
+### 실시간 실행 스크립트 — `realtime/`
 
 **7개 모두 ESP32 서보 밸브를 HTTP로 제어합니다.** 차이는 오디오를 어디서
 받는지, U-Net 디노이저를 쓰는지, 카메라 인식이 붙는지입니다.
@@ -95,7 +123,7 @@ ESP32 서보모터로 밸브를 자동 차단하는 시스템입니다.
 
 | 파일 | 설명 |
 | --- | --- |
-| `test_camera_cup_classification.py` | 오디오/AI 모델을 배제하고 카메라 인식만 검증하는 테스트 프로그램. ResNet-18 임베딩 코사인 유사도로 등록된 컵을 분류. 실행 중 `[c]` 컵 등록, `[+]/[-]` 임계값 조정, `[Space]` 일시정지. |
+| `realtime/test_camera_cup_classification.py` | 오디오/AI 모델을 배제하고 카메라 인식만 검증하는 테스트 프로그램. ResNet-18 임베딩 코사인 유사도로 등록된 컵을 분류. 실행 중 `[c]` 컵 등록, `[+]/[-]` 임계값 조정, `[Space]` 일시정지. |
 
 ### 평가 · 시뮬레이션 (`tests_and_simulations/`)
 
@@ -123,12 +151,12 @@ ESP32 서보모터로 밸브를 자동 차단하는 시스템입니다.
 
 | 파일 | 설명 |
 | --- | --- |
-| `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `DOCKER.md` | CUDA 12.1 기반 실행 환경. 자세한 내용은 [DOCKER.md](./DOCKER.md). |
+| `Dockerfile`, `docker-compose.yml`, `.dockerignore` | CUDA 12.1 기반 실행 환경. 자세한 내용은 [docs/DOCKER.md](./docs/DOCKER.md). |
 | `requirements.txt` | 실행에 필요한 파이썬 패키지 고정 버전. |
-| `setup.bat`, `run.bat` | Windows용 venv 생성 / 실행 배치 스크립트. |
+| `scripts/setup.bat`, `scripts/run.bat` | Windows용 venv 생성 / 실행 배치 스크립트. 어디서 실행하든 저장소 루트로 이동한 뒤 동작합니다. |
 | `calibration_cache/*.npz` | 컵별 공명 템플릿 캐시. 한 번 학습하면 다음부터 즉시 로드. |
-| `presentation.md`, `noise_filter_presentation.md` | 시스템 전체 / 디노이징 기법 비교 발표 자료 (Marp). |
-| `PROJECT_SUMMARY.md` | 개발 이력과 파라미터 튜닝 근거 기록. |
+| `docs/presentation.md`, `docs/noise_filter_presentation.md` | 시스템 전체 / 디노이징 기법 비교 발표 자료 (Marp). |
+| `docs/PROJECT_SUMMARY.md` | 개발 이력과 파라미터 튜닝 근거 기록. |
 
 ---
 
@@ -163,7 +191,7 @@ source venv/bin/activate        # Windows: .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Docker로 실행하려면 [DOCKER.md](./DOCKER.md)를 참고하세요.
+Docker로 실행하려면 [docs/DOCKER.md](./docs/DOCKER.md)를 참고하세요.
 
 ### 2. 모델 가중치 내려받기
 
@@ -177,7 +205,7 @@ huggingface-cli download bpiyush/sound-of-water-models --local-dir ./models
 
 ### 3. ESP32 펌웨어 업로드
 
-1. Arduino IDE로 [`esp32_servo_i2s_mic.ino`](./esp32_servo_i2s_mic.ino)를 엽니다.
+1. Arduino IDE로 [`firmware/esp32_servo_i2s_mic/`](./firmware/esp32_servo_i2s_mic/)를 엽니다.
 2. 상단 설정값을 본인 환경에 맞게 수정합니다.
    ```cpp
    const char* ssid = "YOUR_WIFI_SSID";
@@ -198,9 +226,9 @@ python tests_and_simulations/test_esp32_servo.py     # 서보 개폐 확인
 ### 5. 실시간 실행
 
 ```bash
-python realtime_esp32_mic_unet.py    # 권장: ESP32 마이크 + 디노이저
-python realtime_noesp_mic_unet.py    # 노트북 마이크 + ESP32 밸브 제어
-python realtime_noesp_camera.py      # 카메라 컵 자동 인식 + 음성 안내
+python realtime/realtime_esp32_mic_unet.py    # 권장: ESP32 마이크 + 디노이저
+python realtime/realtime_noesp_mic_unet.py    # 노트북 마이크 + ESP32 밸브 제어
+python realtime/realtime_noesp_camera.py      # 카메라 컵 자동 인식 + 음성 안내
 ```
 
 실행 흐름:
@@ -229,7 +257,7 @@ python realtime_noesp_camera.py      # 카메라 컵 자동 인식 + 음성 안�
 > 가드 타임은 원래 2.0초였습니다. 5~8초짜리 짧은 음원에서 "물 감지 → 가드
 > 2초 → 연속 확인 2회(2초)"로 최소 4초가 필요해 오디오가 먼저 끝나버리는
 > **미정지 현상**이 발생했고, 1.0초로 줄여 해결했습니다.
-> 상세 내역은 [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) 참고.
+> 상세 내역은 [docs/PROJECT_SUMMARY.md](./docs/PROJECT_SUMMARY.md) 참고.
 
 ---
 
@@ -263,7 +291,7 @@ U-Net은 1초 오디오 처리에 약 **5ms**만 소요되어 실시간성에 �
   16bit PCM과 16배 볼륨 부스트가 나옵니다.
 - **물을 안 따르는데 멈춤 신호가 나감** — 침묵 게이트 임계값 문제입니다.
   조용한 상태에서 캘리브레이션을 다시 하면 노이즈 플로어가 갱신됩니다.
-- **컵 인식이 자꾸 틀림** — `test_camera_cup_classification.py`에서 `[+]`/`[-]`로
+- **컵 인식이 자꾸 틀림** — `realtime/test_camera_cup_classification.py`에서 `[+]`/`[-]`로
   매칭 임계값을 조정한 뒤 그 값을 본 스크립트에 반영하세요.
 
 ---
