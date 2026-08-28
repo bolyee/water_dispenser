@@ -1,0 +1,55 @@
+services:
+  # Gradio demo — the headless entrypoint. http://localhost:7860
+  #   docker compose up demo
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sound-of-water:latest
+    ports:
+      - "7860:7860"
+    volumes:
+      # Model weights live outside the image (~360 MB). Download them first:
+      #   huggingface-cli download bpiyush/sound-of-water-models --local-dir ./models
+      - ./models:/app/models:ro
+      # Persist the HuggingFace cache so wav2vec2 is not re-downloaded per run.
+      - hf-cache:/app/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Interactive shell for the realtime_*.py scripts and dataset tools.
+  #   docker compose run --rm shell
+  shell:
+    image: sound-of-water:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    command: ["bash"]
+    stdin_open: true
+    tty: true
+    volumes:
+      # Bind-mount the source so edits on the host are live in the container.
+      - .:/app:rw
+      - hf-cache:/app/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Live microphone / ESP32 serial access. Host-specific, so left commented
+    # out — an absent device makes the container fail to start.
+    # devices:
+    #   - "/dev/snd:/dev/snd"          # ALSA capture (Linux hosts only)
+    #   - "/dev/ttyUSB0:/dev/ttyUSB0"  # ESP32 over USB serial
+    # network_mode: host               # required for the ESP32 UDP stream
+
+volumes:
+  hf-cache:

@@ -1,188 +1,276 @@
-# <img src="./media_assets/pouring-water-logo5.png" alt="Logo" width="40">  The Sound of Water: Inferring Physical Properties from Pouring Liquids
+# 🚰 Water Dispenser — 물소리 기반 실시간 수위 감지 및 자동 차단 시스템
 
-[Piyush Bagad](https://bpiyush.github.io/), [Makarand Tapaswi](https://makarandtapaswi.github.io/), [Cees G. M. Snoek](https://www.ceessnoek.info/), [Andrew Zisserman](https://www.robots.ox.ac.uk/~az/)
+물 따르는 **소리만으로** 컵의 수위를 실시간 추정하고, 목표 수위에 도달하면
+ESP32 서보모터로 밸브를 자동 차단하는 시스템입니다.
+카메라·수위센서 없이 마이크 하나로 동작하며, 시각장애인 사용자를 위한
+카메라 기반 컵 자동 인식 + 음성 안내 모드를 포함합니다.
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2411.11222" target="_blank">
-    <img src="https://img.shields.io/badge/arXiv-Paper-red" alt="arXiv">
-  </a>
-  &nbsp;&nbsp;&nbsp;
-  <a target="_blank" href="https://colab.research.google.com/github/bpiyush/SoundOfWater/blob/main/playground.ipynb">
-  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
-  </a>
-  &nbsp;&nbsp;&nbsp;
-  <a href="https://huggingface.co/spaces/bpiyush/SoundOfWater" target="_blank">
-    <img src="https://img.shields.io/badge/Gradio-Demo-orange" alt="Gradio">
-  </a>
-  &nbsp;&nbsp;&nbsp;
-  <a href="https://huggingface.co/bpiyush/sound-of-water-models" target="_blank">
-    <img src="https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-md-dark.svg" alt="Huggingface">
-  </a>
-  <a href="https://huggingface.co/datasets/bpiyush/sound-of-water" target="_blank">
-    <img src="https://huggingface.co/datasets/huggingface/badges/resolve/main/dataset-on-hf-md-dark.svg" alt="Huggingface">
-  </a>
-</p>
-
-<!-- Add a teaser image. -->
-<p align="center">
-  <img src="./media_assets/pitch_on_spectrogram-compressed.gif" alt="Teaser" width="100%">
-</p>
-
-*Key insight*: As water is poured, the fundamental frequency that we hear changes predictably over time as a function of physical properties (e.g., container dimensions).
-
-
-**TL;DR**: We present a method to infer physical properties of liquids from *just* the sound of pouring. We show in theory how *pitch* can be used to derive various physical properties such as container height, flow rate, etc. Then, we train a pitch detection network (`wav2vec2`) using simulated and real data. The resulting model can predict the physical properties of pouring liquids with high accuracy. The latent representations learned also encode information about liquid mass and container shape.
-
-
-## 📅 Updates
-
-## 📑 Table of Contents
-
-- [  The Sound of Water: Inferring Physical Properties from Pouring Liquids](#--the-sound-of-water-inferring-physical-properties-from-pouring-liquids)
-  - [📅 Updates](#-updates)
-  - [📑 Table of Contents](#-table-of-contents)
-  - [✨ Highlights](#-highlights)
-  - [📂 Dataset](#-dataset)
-  - [🤖 Models](#-models)
-  - [🎮 Playground](#-playground)
-  - [📊 Results](#-results)
-  - [📜 Citation](#-citation)
-  - [🙏 Acknowledgements](#-acknowledgements)
-
-
-## ✨ Highlights
-
-1. We train a `wav2vec2` model to estimate the pitch of pouring water. We use supervision from simulated data and fine-tune on real data using visual co-supervision.
-2. We show physical property estimation from pitch. For example, in estimating the height of the container, we achieve a mean absolute error of 2.2 cm, in radius estimation, 1.6 cm and in estimating length of air column, 0.6 cm.
-3. We show strong generalisation to other datasets (e.g., [Wilson et al.](https://gamma.cs.unc.edu/PSNN/)) and some videos from YouTube.
-4. We also show that the learned representations can be regressed to estimate the mass of the liquid and the shape of the container.
-5. We release a clean dataset of 805 videos of water pouring with annotations for physical properties.
-
-## 📂 Dataset
-
-We collect a dataset of 805 clean videos that show the action of pouring water in a container. Our dataset spans over 50 unique containers made of 5 different materials, 4 different shapes and with hot and cold water. Some example containers are shown below.
-
-<p align="center">
-  <img width="650" alt="image" src="./media_assets/containers-v2.png">
-</p>
-
-The dataset is available to download [here]([.](https://huggingface.co/datasets/bpiyush/sound-of-water)).
-
-**Option 1:** Download from `huggingface` 
-
-```py
-# Note: this shall take 5-10 mins.
-
-# Optionally, disable progress bars
-# os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = True
-
-from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id="bpiyush/sound-of-water",
-    repo_type="dataset",
-    local_dir="/path/to/dataset/SoundOfWater",
-)
 ```
-The total size of the dataset is 1.4 GB.
-
-**Option 2:** Download from VGG servers
-
-Coming soon!
-
-
-## 🤖 Models
-
-We provide trained models for pitch estimation.
-
-<table style="font-size: 12px;">
-<tr>
-  <th>File link</th>
-  <th>Description</th>
-  <th>Size</th>
-</tr>
-<tr>
-  <td> <a href="url">synthetic_pretrained.pth</a> </td>
-  <td>Pre-trained on synthetic data &nbsp;&nbsp;&nbsp;</td>
-  <td>361M</td>
-</tr>
-<tr>
-  <td> <a href="url">real_finetuned_visual_cosupervision.pth</a> </td>
-  <td>Trained with visual co-supervision &nbsp;&nbsp;&nbsp;</td>
-  <td>361M</td>
-</tr>
-</table>
-
-The models are available to download [here](https://huggingface.co/bpiyush/sound-of-water-models).
-
-
-**Option 1:** Download from `huggingface`. Use this snippet to download the models:
-
-```python
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="bpiyush/sound-of-water-models",
-    local_dir="/path/to/download/",
-)
+[물소리] ──► [2D U-Net 디노이저] ──► [Wav2Vec2 공기주 길이 추정] ──► [수위 %]
+                                                                      │
+                                        [ESP32 서보 밸브] ◄── HTTP /stop
 ```
 
-**Option 2:** Download from VGG servers
+---
 
-Coming soon!
+## 📌 원본 프로젝트 (출처)
 
+이 저장소는 아래 연구의 공개 코드를 **클론하여 확장한 것**입니다.
+`sound_of_water/`, `shared/`, `demo/`, `dataset_tools/`, `playground.ipynb`,
+사전학습 체크포인트는 모두 원저자의 결과물입니다.
 
-## 🎮 Playground
+> **The Sound of Water: Inferring Physical Properties from Pouring Liquids**
+> Piyush Bagad, Makarand Tapaswi, Cees G. M. Snoek, Andrew Zisserman
+> [프로젝트 페이지](https://bpiyush.github.io/pouring-water-website/) ·
+> [arXiv](https://arxiv.org/abs/2411.11222) ·
+> [원본 저장소](https://github.com/bpiyush/SoundOfWater) ·
+> [HuggingFace 모델](https://huggingface.co/bpiyush/sound-of-water-models)
 
-We provide a single [notebook](./playground.ipynb) to run the model and visualise results.
-We walk you through the following steps:
-- Load data
-- Demo the physics behind pouring water
-- Load and run the model
-- Visualise the results
+원본 라이선스는 [LICENSE](./LICENSE)를 따릅니다. 인용은 이 문서 맨 아래를 참고하세요.
 
-Before running the notebook, be sure to install the required dependencies:
+---
+
+## 🆕 이 저장소에서 추가한 것
+
+원본은 오프라인 오디오 파일을 분석하는 연구 코드입니다.
+여기에 **실시간 스트리밍 추론 + 하드웨어 제어 + 소음 대응**을 붙였습니다.
+
+1. **실시간 추론 파이프라인** — 1초 버퍼 단위 스트리밍 처리, 컵별 공명 템플릿
+   캘리브레이션, Mel 매칭 기반 수위 추정
+2. **ESP32 하드웨어 연동** — I2S 마이크 UDP 스트리밍, HTTP 서보 밸브 제어
+3. **2D U-Net 디노이저** — 생활 소음 환경에서의 오인식/오버플로우 해결
+   (직접 학습, `models/denoiser_best.pth`)
+4. **안전 제어 로직** — RMS 침묵 게이트, 물리적 변화 제한, 연속 확인, 안전 가드
+5. **카메라 기반 컵 자동 인식** — ResNet-18 임베딩 매칭 + TTS 음성 안내
+6. **평가 시뮬레이터** — Clean / Noisy / DSP / AI 디노이즈 4개 시나리오 정량 비교
+
+---
+
+## 📁 직접 작성한 파일 설명
+
+### 펌웨어 (ESP32 / Arduino)
+
+| 파일 | 설명 |
+| --- | --- |
+| `esp32_servo_i2s_mic.ino` | **메인 펌웨어.** INMP441 I2S 마이크를 32bit로 읽어 16kHz 16bit PCM으로 변환 후 PC로 UDP(5005) 전송. 동시에 HTTP 서버를 열어 `/open`, `/stop` 요청으로 SG90 서보 밸브 제어. |
+| `esp32_servo.ino` | 서보 제어만 하는 최소 버전. 배선·서보 각도 확인용. |
+
+### 실시간 실행 스크립트
+
+**7개 모두 ESP32 서보 밸브를 HTTP로 제어합니다.** 차이는 오디오를 어디서
+받는지, U-Net 디노이저를 쓰는지, 카메라 인식이 붙는지입니다.
+
+| 파일 | 오디오 입력 | U-Net 디노이저 | 카메라 |
+| --- | --- | --- | --- |
+| `realtime_esp32_mic.py` | ESP32 UDP (5005) | ✗ | ✗ |
+| `realtime_esp32_mic_unet.py` | ESP32 UDP (5005) | ✓ | ✗ |
+| `realtime_noesp_mic.py` | 로컬 마이크 | ✗ | ✗ |
+| `realtime_noesp_mic_unet.py` | 로컬 마이크 | ✓ | ✗ |
+| `realtime_noesp_camera.py` | 로컬 마이크 | ✗ | ✓ |
+| `realtime_mic.py` | 로컬 마이크 | ✗ | ✗ |
+| `realtime_mic_unet.py` | 로컬 마이크 | ✓ | ✗ |
+
+- `noesp_` 접두사 = **오디오는 노트북 마이크로 받고, 밸브 제어만 ESP32로** 보내는 구성.
+  ESP32 마이크 음질이 나쁘거나 UDP가 방화벽에 막힐 때 사용합니다.
+- `realtime_mic.py` / `realtime_mic_unet.py`는 `noesp_` 버전의 초기 형태입니다.
+  기능은 같지만 ESP32 주소가 파일 중간에 `http://192.168.0.250`으로 하드코딩되어
+  있습니다. 새로 쓴다면 `noesp_` 쪽을 쓰세요.
+- `realtime_noesp_camera.py`는 화면에서 컵을 마우스로 고를 필요 없이 카메라에
+  컵을 비추면 HSV 히스토그램으로 자동 인식하고, 모든 안내를 macOS `say` TTS로
+  음성 출력합니다. 시각장애인 사용을 상정한 버전입니다.
+
+> ⚠️ ESP32 IP가 스크립트 상단에 `ESP32_IP = "20.30.88.125"`로 하드코딩되어
+> 있습니다. 실행 전에 본인 ESP32의 주소로 바꿔야 합니다
+> (`realtime_mic*.py`는 파일 중간의 URL 문자열을 직접 수정).
+
+### 디노이저
+
+| 파일 | 설명 |
+| --- | --- |
+| `sound_of_water/audio_pitch/denoiser.py` | 경량 2D U-Net + `AudioDenoisingWrapper`. 1초 스펙트로그램 magnitude에 곱할 마스크(0.0~1.0)를 예측하고, 원본 위상을 재사용해 파형으로 복원. |
+| `tests_and_simulations/train_denoiser.py` | 디노이저 학습 스크립트. Clean 805개 음원 + TV 소음(+3dB) 합성 페어로 학습. |
+| `models/denoiser_best.pth` | 학습 완료 가중치 (495KB). **HuggingFace에 없는 자체 학습 결과물**입니다. |
+
+### 카메라 컵 인식
+
+| 파일 | 설명 |
+| --- | --- |
+| `test_camera_cup_classification.py` | 오디오/AI 모델을 배제하고 카메라 인식만 검증하는 테스트 프로그램. ResNet-18 임베딩 코사인 유사도로 등록된 컵을 분류. 실행 중 `[c]` 컵 등록, `[+]/[-]` 임계값 조정, `[Space]` 일시정지. |
+
+### 평가 · 시뮬레이션 (`tests_and_simulations/`)
+
+| 파일 | 설명 |
+| --- | --- |
+| `evaluate_noisy_vs_clean.py` | Clean 데이터셋과 소음 합성 데이터셋을 1:1 매핑해 수위 MAE와 정지 지연(Stop Latency)을 정량 비교. |
+| `evaluate_unseen_noise.py` | 학습에 쓰지 않은 종류의 소음에 대한 일반화 성능 평가. |
+| `compare_denoise.py` | DSP(스펙트럼 차감) vs 2D U-Net 디노이즈 결과 비교. |
+| `simulate_realtime_stream.py` | WAV 파일을 실시간 스트림처럼 1초씩 흘려보내 정지 로직 재현. |
+| `simulate_mel_match.py`, `simulate_pitch_matching.py`, `simulate_stop.py` | Mel 매칭 / 피치 매칭 / 정지 트리거 각각의 단위 시뮬레이션. |
+| `record_esp32_audio.py` | ESP32 UDP 수신 확인 및 WAV 녹음. **배선 후 첫 점검용.** |
+| `test_esp32_servo.py`, `test_mic_input.py`, `test_inference.py` | 서보 / 마이크 입력 / 모델 추론 개별 동작 확인. |
+| `debug_chunk.py`, `debug_pitch.py` | 청크 단위 상태 변수(RMS, 예측값, 채택값, 연속 확인 횟수, 가드 타임) 트레이싱. |
+
+### 데이터셋 도구 (`dataset_tools/`)
+
+| 파일 | 설명 |
+| --- | --- |
+| `download_dataset.py` | 원본 sound-of-water 데이터셋 다운로드. |
+| `download_yt.py`, `download_noise_datasets.py`, `download_home_noise.py` | 유튜브/공개 소음 데이터셋 수집. |
+| `mix_yt_noise.py`, `mix_home_noise.py`, `split_tv_noise.py` | Clean 음원에 소음을 지정 SNR로 합성해 학습/평가용 노이즈 데이터셋 생성. |
+| `create_unseen_test_dataset.py` | 학습에 쓰지 않은 소음으로 별도 테스트셋 구성. |
+
+### 기타
+
+| 파일 | 설명 |
+| --- | --- |
+| `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `DOCKER.md` | CUDA 12.1 기반 실행 환경. 자세한 내용은 [DOCKER.md](./DOCKER.md). |
+| `requirements.txt` | 실행에 필요한 파이썬 패키지 고정 버전. |
+| `setup.bat`, `run.bat` | Windows용 venv 생성 / 실행 배치 스크립트. |
+| `calibration_cache/*.npz` | 컵별 공명 템플릿 캐시. 한 번 학습하면 다음부터 즉시 로드. |
+| `presentation.md`, `noise_filter_presentation.md` | 시스템 전체 / 디노이징 기법 비교 발표 자료 (Marp). |
+| `PROJECT_SUMMARY.md` | 개발 이력과 파라미터 튜닝 근거 기록. |
+
+---
+
+## 🔌 하드웨어 배선
+
+#### INMP441 I2S 마이크
+| 핀 | ESP32 |
+| --- | --- |
+| VDD | **3.3V** (5V 금지) |
+| GND | GND |
+| L/R | GND (Left 채널 선택) |
+| SD | GPIO 2 (D2) |
+| WS | GPIO 15 (D15) |
+| SCK | GPIO 4 (D4) |
+
+#### SG90 서보모터
+| 핀 | ESP32 |
+| --- | --- |
+| Signal (주황/흰) | GPIO 13 (D13) |
+| VCC (빨강) | 5V 또는 VIN |
+| GND (갈색/검정) | GND (마이크 GND와 공통) |
+
+---
+
+## 🚀 실행 방법
+
+### 1. 환경 준비
 
 ```bash
-conda create -n sow python=3.8
-conda activate sow
-
-# Install desired torch version
-# NOTE: change the version if you are using a different CUDA version
-pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121
-
-# Additional packages
-pip install lightning==2.1.2
-pip install timm==0.9.10
-pip install pandas
-pip install decord==0.6.0
-pip install librosa==0.10.1
-pip install einops==0.7.0
-pip install ipywidgets jupyterlab seaborn
-
-# if you find a package is missing, please install it with pip
+python3 -m venv venv
+source venv/bin/activate        # Windows: .\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-Remember to download the model in the previous step. Then, run the notebook.
+Docker로 실행하려면 [DOCKER.md](./DOCKER.md)를 참고하세요.
 
-You can checkout the demo [here](https://huggingface.co/spaces/bpiyush/SoundOfWater).
+### 2. 모델 가중치 내려받기
 
-## 📊 Results
+메인 체크포인트(약 360MB)는 저장소에 포함되어 있지 않습니다.
 
-We show key results in this section. Please refer to the paper for more details.
+```bash
+huggingface-cli download bpiyush/sound-of-water-models --local-dir ./models
+```
 
-<p align="center">
-<img width="650" alt="image" src="https://github.com/user-attachments/assets/34b0ea66-5ee7-4338-bf04-f0b20f87d0de">
+`models/denoiser_best.pth`(디노이저)는 저장소에 함께 들어 있습니다.
 
-<img width="650" alt="image" src="https://github.com/user-attachments/assets/7193001b-1485-42b5-aa25-feab777e9921">
+### 3. ESP32 펌웨어 업로드
 
-<img width="650" alt="image" src="https://github.com/user-attachments/assets/9cf2a960-af8b-4df3-b714-6755b5bb90f6">
-</p>
+1. Arduino IDE로 [`esp32_servo_i2s_mic.ino`](./esp32_servo_i2s_mic.ino)를 엽니다.
+2. 상단 설정값을 본인 환경에 맞게 수정합니다.
+   ```cpp
+   const char* ssid = "YOUR_WIFI_SSID";
+   const char* password = "YOUR_WIFI_PASSWORD";
+   const char* pc_ip = "192.168.0.206";  // 파이썬을 실행할 PC의 로컬 IP
+   ```
+3. 업로드 후 시리얼 모니터를 **115200 baud**로 엽니다.
+   조용할 때 `Mic Volume`이 30~100 사이로 나오고, 마이크에 바람을 불면
+   값이 크게 흔들리면 정상입니다.
 
+### 4. 연결 확인
 
-<!-- Add a citation -->
-## 📜 Citation
+```bash
+python tests_and_simulations/record_esp32_audio.py   # UDP 수신 확인 + WAV 녹음
+python tests_and_simulations/test_esp32_servo.py     # 서보 개폐 확인
+```
 
-If you find this repository useful, please consider giving a star ⭐ and citation
+### 5. 실시간 실행
+
+```bash
+python realtime_esp32_mic_unet.py    # 권장: ESP32 마이크 + 디노이저
+python realtime_noesp_mic_unet.py    # 노트북 마이크 + ESP32 밸브 제어
+python realtime_noesp_camera.py      # 카메라 컵 자동 인식 + 음성 안내
+```
+
+실행 흐름:
+
+1. **새 컵 학습** — 메뉴에서 `0`을 선택하고 이름을 입력한 뒤, 빈 컵에 가득 찰
+   때까지 물을 따릅니다. 공명 템플릿이 `calibration_cache/`에 저장됩니다.
+2. **저장된 컵 선택** — 다음 실행부터는 목록에서 컵을 고르면 즉시 시작합니다.
+3. **물 따르기** — 밸브가 열리고(`/open`) 수위를 추적하다가, 목표 임계치에
+   도달하면 정지 신호(`/stop`)를 보냅니다.
+
+---
+
+## ⚙️ 핵심 제어 파라미터
+
+`realtime_*.py`와 시뮬레이터가 동일한 값을 공유합니다.
+
+| 파라미터 | 값 | 의미 |
+| --- | --- | --- |
+| `INFERENCE_INTERVAL` | 1.0 초 | 추론 주기 |
+| `FILL_RATIO` | 0.55 | 정지 트리거 임계치. 통신 RTT·모터 구동 시간·배관 잔류 유량을 감안해 **물리적 80~85% 시점에 맞도록 선제 차단**하는 값입니다. |
+| `MAX_CHANGE` | 3.0 cm | 1초당 허용 수위 변화폭. 공기주 높이는 1초에 급변할 수 없으므로 초과 시 오인식으로 보고 직전 값을 홀드. |
+| `CONFIRM_COUNT_REQUIRED` | 2 회 | 임계치를 연속 2회 만족해야 정지 확정 |
+| `silence_threshold` | RMS 0.00075 | 침묵 게이트. `max(0.0003, noise_rms * 1.5)`로 동적 계산되며 이하 입력은 AI 연산을 우회 |
+| Guard Time | 1.0 초 | 최초 물 감지 후 이 시간이 지나야 정지 트리거 작동 |
+
+> 가드 타임은 원래 2.0초였습니다. 5~8초짜리 짧은 음원에서 "물 감지 → 가드
+> 2초 → 연속 확인 2회(2초)"로 최소 4초가 필요해 오디오가 먼저 끝나버리는
+> **미정지 현상**이 발생했고, 1.0초로 줄여 해결했습니다.
+> 상세 내역은 [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) 참고.
+
+---
+
+## 📊 디노이징 성능 비교
+
+20건 평가 기준 (`tests_and_simulations/evaluate_noisy_vs_clean.py`):
+
+| 시나리오 | 수위 MAE | 80% 정지 지연 | 자동 정지 실패 |
+| --- | --- | --- | --- |
+| Clean (무소음) | 0.85 cm | +0.3 초 | 0 건 |
+| Noisy (필터 없음) | 4.20 cm | +2.8 초 | **6 건 (오버플로우)** |
+| DSP Denoised (스펙트럼 차감) | 2.10 cm | +1.5 초 | 2 건 |
+| **AI Denoised (2D U-Net)** | **1.25 cm** | **+0.8 초** | **0 건** |
+
+초기에는 연산량이 적은 DSP 스펙트럼 차감법(`prop_decrease=0.90`, 기동 시 2초간
+노이즈 플로어 수집)을 먼저 시도했으나, 정지 실패가 남아 2D U-Net으로 전환했습니다.
+U-Net은 1초 오디오 처리에 약 **5ms**만 소요되어 실시간성에 영향을 주지 않고,
+터미널에 `[Denoise Latency: X.Xms]`로 실측값이 계속 출력됩니다.
+
+---
+
+## 🛠️ 트러블슈팅
+
+- **UDP 패킷이 안 들어옴 (Windows)** — 방화벽에서 `python.exe`를 허용해야 합니다.
+  관리자 PowerShell에서:
+  ```powershell
+  Set-NetFirewallRule -DisplayName "python.exe" -Action Allow
+  ```
+- **마이크 소리가 너무 작음** — INMP441은 채널당 32 클럭으로 24bit를 보냅니다.
+  드라이버를 `I2S_BITS_PER_SAMPLE_32BIT`로 두고 `>> 12` 시프트해야 정렬된
+  16bit PCM과 16배 볼륨 부스트가 나옵니다.
+- **물을 안 따르는데 멈춤 신호가 나감** — 침묵 게이트 임계값 문제입니다.
+  조용한 상태에서 캘리브레이션을 다시 하면 노이즈 플로어가 갱신됩니다.
+- **컵 인식이 자꾸 틀림** — `test_camera_cup_classification.py`에서 `[+]`/`[-]`로
+  매칭 임계값을 조정한 뒤 그 값을 본 스크립트에 반영하세요.
+
+---
+
+## 📜 인용
+
+원본 연구를 사용하는 경우 아래를 인용해 주세요.
 
 ```bibtex
 @article{sound_of_water_bagad,
@@ -191,137 +279,10 @@ If you find this repository useful, please consider giving a star ⭐ and citati
   journal={arXiv},
   year={2024}
 }
-
-@inproceedings{
-      bagad2024soundofwater,
-      title={The {S}ound of {W}ater: {I}nferring {P}hysical {P}roperties from {P}ouring {L}iquids},
-      author={Bagad, Piyush and Tapaswi, Makarand and Snoek, Cees G. M. and Zisserman, Andrew},
-      booktitle={ICASSP},
-      year={2025}
-}
 ```
 
-<!-- Add acknowledgements, license, etc. here. -->
-## 🙏 Acknowledgements
+## 🙏 감사
 
-* We thank Ashish Thandavan for support with infrastructure and Sindhu
-Hegde, Ragav Sachdeva, Jaesung Huh, Vladimir Iashin, Prajwal KR, and Aditya Singh for useful
-discussions.
-* This research is funded by EPSRC Programme Grant VisualAI EP/T028572/1, and a Royal Society Research Professorship RP / R1 / 191132.
-
-We also want to highlight closely related work that could be of interest:
-
-* [Analyzing Liquid Pouring Sequences via Audio-Visual Neural Networks](https://gamma.cs.unc.edu/PSNN/). IROS (2019).
-* [Human sensitivity to acoustic information from vessel filling](https://psycnet.apa.org/record/2000-13210-019). Journal of Experimental Psychology (2020).
-* [See the Glass Half Full: Reasoning About Liquid Containers, Their Volume and Content](https://arxiv.org/abs/1701.02718). ICCV (2017).
-* [CREPE: A Convolutional Representation for Pitch Estimation](https://arxiv.org/abs/1802.06182). ICASSP (2018).
-
----
-
-## 🚰 Real-time Automatic Cup-Filler System (ESP32 + I2S Mic + Servo)
-
-This repository has been extended to support a **real-time automatic cup-filler stop system** using an ESP32 microcontroller, an I2S digital microphone (INMP441), and an SG90 servo motor valve. The system streams audio via UDP to a PC running the trained `Wav2Vec2` model to estimate water level in real-time, sending back HTTP stop commands to shut the valve when the cup is filled to the target level.
-
-### 🔌 1. Hardware Connections (Wiring Diagram)
-
-Connect the components to your ESP32 board as follows:
-
-#### INMP441 I2S Microphone
-* **VDD** -> ESP32 **3.3V** (do not use 5V)
-* **GND** -> ESP32 **GND**
-* **L/R** -> ESP32 **GND** (selects Left Channel)
-* **SD** -> ESP32 **GPIO 2** (D2)
-* **WS** -> ESP32 **GPIO 15** (D15)
-* **SCK** -> ESP32 **GPIO 4** (D4)
-
-#### SG90 Servo Motor
-* **Signal (Orange/White)** -> ESP32 **GPIO 13** (D13)
-* **VCC (Red)** -> ESP32 **5V** (or VIN)
-* **GND (Brown/Black)** -> ESP32 **GND** (tied together with Microphone GND)
-
----
-
-### 💾 2. ESP32 Firmware Setup (`esp32_servo_i2s_mic.ino`)
-
-1. Open the [esp32_servo_i2s_mic.ino](./esp32_servo_i2s_mic.ino) sketch in the Arduino IDE.
-2. Configure your WiFi credentials and your PC's IP address:
-   ```cpp
-   const char* ssid = "YOUR_WIFI_SSID";
-   const char* password = "YOUR_WIFI_PASSWORD";
-   const char* pc_ip = "YOUR_PC_IP_ADDRESS"; // e.g., 192.168.0.206
-   ```
-3. Upload the sketch to the ESP32.
-4. Open the Serial Monitor at **115200 baud**. When silent, you should see `Mic Volume` readings around `30-100` and changing when you speak/blow on the mic.
-
----
-
-### 💻 3. PC Setup & Real-time Execution
-
-Ensure you are in the python virtual environment and run the real-time script:
-
-```bash
-# Verify connection & record test
-python tests_and_simulations/record_esp32_audio.py
-
-# Run real-time monitoring and control
-python realtime_esp32_mic.py
-```
-
-#### Running Steps:
-1. **Choose New Cup (0)**: Input `0` to calibrate a new cup. Provide a name and record the water pouring sound from empty to full.
-2. **Select Cup**: For subsequent runs, select your saved cup index (e.g. `juicy`) from the menu.
-3. **Pour Water**: The system will automatically open the valve (`/open`). As you pour, it tracks the water level and fires a stop command (`/stop`) when it reaches the target threshold (`FILL_RATIO`, default 55% to compensate for fill latency, resulting in an 80-85% physical fill level).
-
----
-
-### 🛠️ 4. Troubleshooting & Core Technical Rationale
-
-* **32-Bit I2S Capture**: The INMP441 requires 32 clock cycles per channel to transmit its 24-bit audio properly. The driver is configured to `I2S_BITS_PER_SAMPLE_32BIT` and right-shifted by 12 (`>> 12`) to yield a 16x volume boost of clean, aligned 16-bit PCM.
-* **Windows Firewall Block**: If the python script fails to receive UDP packets, you must allow `python.exe` through the Windows Defender Firewall. Run the following command in an **Administrator PowerShell**:
-  ```powershell
-  Set-NetFirewallRule -DisplayName "python.exe" -Action Allow
-  ```
-* **Dynamic Silence Gate**: To prevent premature stops when no water is pouring, the system calculates a dynamic threshold `max(0.0003, noise_rms * 1.5)` using the calibration baseline noise floor. It ignores any inputs quieter than this gate.
-
----
-
-### 🛡️ 5. Real-time 2D U-Net Denoised Execution (Recommended for Noisy Rooms)
-
-To handle ambient noise (speech, TV, background hubbub), two dedicated real-time scripts integrated with the trained **2D U-Net Denoising model** are provided. The model acts as a pre-processing filter to clean microphone signals before they are processed by the core AI model.
-
-The necessary model weights (`models/denoiser_best.pth` and `models/dsr9mf13_ep100_step12423_real_finetuned_with_cosupervision.pth`) are already packaged in this zip archive, so **no external weights downloads are required**.
-
-#### Step-by-Step Setup for ZIP Recipients:
-
-1. **Extract** the zip package.
-2. **Create and Activate a virtual environment**:
-   ```bash
-   # On Linux/macOS:
-   python3 -m venv venv
-   source venv/bin/activate
-   
-   # On Windows (PowerShell):
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
-   ```
-3. **Install Dependencies**:
-   Ensure all libraries (including PyTorch, Librosa, and U-Net helper libraries) are installed:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. **Run the U-Net Denoised Real-time Monitors**:
-   * **Local PC Microphone**:
-     ```bash
-     python3 realtime_mic_unet.py
-     ```
-   * **ESP32 UDP Microphone**:
-     ```bash
-     python3 realtime_esp32_mic_unet.py
-     ```
-
-#### Key Highlights:
-- **Instant Processing**: The lightweight U-Net takes only ~5ms to process 1 second of audio, introducing negligible delay while ensuring high level estimation accuracy.
-- **Latency Monitoring**: The scripts print `[Denoise Latency: X.Xms]` in the terminal for every 1-second interval so you can verify the execution speed in real-time.
-- **Clean Calibration**: When teaching a new cup (`0`), the recording is automatically filtered through the U-Net before extracting the resonance templates, resulting in robust calibrations even in noisy rooms.
-
-
+수위 추정 모델과 데이터셋 전부는 원저자
+[Piyush Bagad 외](https://github.com/bpiyush/SoundOfWater)의 연구 결과입니다.
+이 저장소는 그 위에 실시간 처리, 하드웨어 제어, 소음 대응을 얹은 것입니다.

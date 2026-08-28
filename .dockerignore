@@ -1,19 +1,51 @@
-# Exclude virtual environments and local caches
+# Everything here is excluded from the build context. Keeping the context
+# small matters a lot in this repo: venv/ and models/ alone are ~1.7 GB.
+
+# Virtual environments
 venv/
+.venv/
+env/
+ENV/
+
+# VCS and tooling
 .git/
 .gitignore
+.gitattributes
 .agents/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.ipynb_checkpoints/
-calibration_cache/
+.claude/
+skills-lock.json
 
-# Exclude massive audio files that aren't needed inside the image build context
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Model weights — mounted at runtime instead of baked into the image
+models/*.pth
+models/*.pt
+models/*.ckpt
+models/*.safetensors
+
+# Runtime scratch
+calibration_cache/
+.gradio/
+demo/.gradio/
+*.log
+
+# Large media not needed at build time.
+# NOTE: media_assets/ is kept — demo/app.py loads its .mp4 files as examples.
+tests_and_simulations/*.wav
 tv_noise.mp3
 playground.ipynb
 
-# Exclude local editor settings
+# ESP32 firmware — flashed from the host, not used inside the container
+*.ino
+
+# Docs and editor/OS cruft
+*.original.md
 .vscode/
 .idea/
+.DS_Store
